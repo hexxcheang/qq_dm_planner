@@ -6,7 +6,8 @@ from openpyxl import load_workbook
 from docgen.generator import generate_documents
 from docgen.models import Customer, LineItem, PurchaseOrder
 from docgen.numbering import Register, do_no, invoice_no
-from docgen.po_parser import ParseError, parse_with_rules
+from docgen import ocr
+from docgen.po_parser import ParseError, items_from_rows, parse_with_rules, short_description
 
 from . import sample_po
 
@@ -97,24 +98,66 @@ def _check_sample(po: PurchaseOrder, with_units: bool = True):
         assert [i.units for i in po.items] == [u for _d, _q, u, _p in sample_po.ITEMS]
 
 
+def _rules(data: bytes, name: str, expect_ocr: bool = False) -> PurchaseOrder:
+    po, used_ocr = parse_with_rules(data, name)
+    assert used_ocr == expect_ocr
+    return po
+
+
 def test_rules_parser_pdf_ruled():
-    _check_sample(parse_with_rules(sample_po.make_pdf(ruled=True), "po.pdf"))
+    _check_sample(_rules(sample_po.make_pdf(ruled=True), "po.pdf"))
 
 
 def test_rules_parser_pdf_unruled():
-    _check_sample(parse_with_rules(sample_po.make_pdf(ruled=False), "po.pdf"))
+    _check_sample(_rules(sample_po.make_pdf(ruled=False), "po.pdf"))
 
 
 def test_rules_parser_xlsx():
-    _check_sample(parse_with_rules(sample_po.make_xlsx(), "po.xlsx"))
+    _check_sample(_rules(sample_po.make_xlsx(), "po.xlsx"))
 
 
 def test_rules_parser_csv():
-    po = parse_with_rules(sample_po.make_csv(), "po.csv")
+    po = _rules(sample_po.make_csv(), "po.csv")
     _check_sample(po, with_units=False)
     assert all(i.units == "Pcs" for i in po.items)
 
 
-def test_rules_parser_rejects_images():
+def test_rules_parser_rejects_unknown_type():
     with pytest.raises(ParseError):
-        parse_with_rules(b"\x89PNG", "po.png")
+        parse_with_rules(b"hello", "po.docx")
+
+
+@pytest.mark.skipif(not ocr.available(), reason="rapidocr not installed")
+def test_rules_parser_scanned_pdf_uses_ocr():
+    _check_sample(_rules(sample_po.make_scanned_pdf(), "po.pdf", expect_ocr=True))
+
+
+def test_short_description_part_number_and_model():
+    text = ("ML5010C\nMACRO LENS, 50MM, 1.1\", C-MOUNT, DM OPTICAL\nP/N:73620230\n"
+            "*CUSTOMER: NIXMA TECHNOLOGY (M) SDN. BHD.\nREMARK:\n1) BUYING PRICE OF SGD 85.00")
+    assert short_description(text) == "73620230 (ML5010C)"
+
+
+def test_short_description_drops_remarks():
+    text = "Optical alignment kit\nwith carry case\nREMARK:\nShip via FedEx"
+    assert short_description(text) == "Optical alignment kit\nwith carry case"
+    assert short_description("15370180 (HC2505A)") == "15370180 (HC2505A)"
+
+
+def test_items_from_rows_multiline_and_table_end():
+    rows = [
+        ["Purchase Order"],
+        ["PO#", "POR13495"],
+        ["S No.", "Description", "Quantity", "UOM", "Unit Price", "Amount"],
+        ["1", "ML5010C", "2", "Pcs", "85.00", "170.00"],
+        ["", "MACRO LENS, 50MM", "", "", "", ""],
+        ["", "P/N:73620230", "", "", "", ""],
+        ["", "REMARK:", "", "", "", ""],
+        ["", "Tax Code Summary", "Tax Rate", "", "Total Net", "Total Tax"],
+        ["", "NT:SG", "0.0%", "", "$170.00", "$0.00"],
+        ["S No.", "Description", "Quantity", "UOM", "Unit Price", "Amount"],  # page 2 header
+        ["", "", "", "", "", ""],
+    ]
+    items = items_from_rows(rows)
+    assert [(i.description, i.qty, i.units, i.unit_price) for i in items] == [
+        ("73620230 (ML5010C)", 2, "Pcs", 85.0)]

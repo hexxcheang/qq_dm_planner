@@ -41,6 +41,18 @@ def make_pdf(ruled: bool = True) -> bytes:
     return buf.getvalue()
 
 
+def make_scanned_pdf() -> bytes:
+    """The PDF PO, printed and scanned: pages are pictures only, with no text layer."""
+    import pypdfium2 as pdfium
+
+    pdf = pdfium.PdfDocument(make_pdf())
+    images = [page.render(scale=150 / 72).to_pil().convert("RGB") for page in pdf]
+    pdf.close()
+    buf = io.BytesIO()
+    images[0].save(buf, format="PDF", resolution=150, save_all=True, append_images=images[1:])
+    return buf.getvalue()
+
+
 def make_xlsx() -> bytes:
     from openpyxl import Workbook
 

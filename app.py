@@ -55,12 +55,13 @@ st.title("Invoice & Delivery Order generator")
 
 with st.sidebar:
     st.header("Settings")
-    use_claude = st.toggle("Read PO with Claude AI", value=claude_available(),
+    use_claude = st.toggle("Read PO with Claude AI (optional, paid)", value=claude_available(),
                            disabled=not claude_available(),
-                           help="Needs ANTHROPIC_API_KEY. Reads any PO layout, including scans "
-                                "and photos. Without it, text PDFs / Excel / CSV are read by rules.")
+                           help="Needs ANTHROPIC_API_KEY. Not required: the free built-in reader "
+                                "handles PDFs, scans, photos, Excel and CSV. Claude can help with "
+                                "unusual PO layouts.")
     if not claude_available():
-        st.caption("ANTHROPIC_API_KEY not set – using the built-in rules reader.")
+        st.caption("Using the free built-in reader (works offline, reads scans too).")
     has_soffice = find_soffice() is not None
     make_pdf = st.checkbox("Also create PDF files", value=has_soffice, disabled=not has_soffice,
                            help="Needs LibreOffice installed.")
@@ -77,7 +78,7 @@ if upload is None:
 data = upload.getvalue()
 file_key = hashlib.sha1(data).hexdigest()
 if st.session_state.get("file_key") != file_key or st.session_state.get("reader_claude") != use_claude:
-    with st.spinner("Reading the PO…"):
+    with st.spinner("Reading the PO… (scans take a few seconds per page)"):
         try:
             po, reader = parse_po(data, upload.name, use_claude=use_claude)
         except ParseError as exc:
@@ -92,7 +93,7 @@ if st.session_state.get("file_key") != file_key or st.session_state.get("reader_
 po: PurchaseOrder = st.session_state["po"]
 if st.session_state["reader"] != "manual":
     if po.items:
-        st.success(f"Read {len(po.items)} item(s) from the PO ({st.session_state['reader']} reader). "
+        st.success(f"Read {len(po.items)} item(s) from the PO ({st.session_state['reader']}). "
                    "Please check them below.")
     else:
         st.warning("No line items found – please type them in below.")

@@ -46,16 +46,10 @@ Optional extras:
 
 - Install [LibreOffice](https://www.libreoffice.org) to also get PDF copies
   of the Invoice and DO.
-- Set an Anthropic API key so Claude reads the PO. Without it, the built-in
-  reader handles text PDFs, Excel and CSV POs that have a normal item table.
-  With it, any layout works, including scanned PDFs and photos.
-
-  ```
-  # Windows (PowerShell), then restart the app
-  setx ANTHROPIC_API_KEY "sk-ant-..."
-  # macOS
-  export ANTHROPIC_API_KEY="sk-ant-..."
-  ```
+- Not needed: an Anthropic API key. The built-in reader is free and works
+  offline. It reads text PDFs, scanned PDFs and photos (with OCR), Excel and
+  CSV. If you ever want Claude to read unusual PO layouts, set
+  `ANTHROPIC_API_KEY` and switch on "Read PO with Claude AI" in the sidebar.
 
 Developers can also run `pip install -r requirements.txt` and
 `streamlit run app.py` directly.
@@ -64,7 +58,7 @@ Developers can also run `pip install -r requirements.txt` and
 
 In the page that opens:
 
-1. Upload the customer's PO (PDF, Excel, CSV, or a photo if Claude is on).
+1. Upload the customer's PO (PDF, scanned PDF, photo, Excel or CSV).
 2. Check the PO number and items it read, and fix anything in the table.
 3. Pick the date. The Invoice No. and DO No. update to match.
 4. Click **Generate Invoice & DO** and download the files.
@@ -88,7 +82,8 @@ pip install -r requirements-dev.txt
 python -m pytest
 ```
 
-- `docgen/po_parser.py` – reads the PO (Claude or rules)
+- `docgen/po_parser.py` – reads the PO (built-in rules, or Claude)
+- `docgen/ocr.py` – free offline OCR for scanned POs (RapidOCR)
 - `docgen/generator.py` – fills the Invoice and DO templates
 - `docgen/numbering.py` – document numbers and the register of used numbers
 - `app.py` – the Streamlit page
