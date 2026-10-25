@@ -16,6 +16,14 @@ if ! .venv/bin/python -m pip install --disable-pip-version-check -q -r requireme
     exit 1
 fi
 
+if ! .venv/bin/python -c "import socket,sys; sys.exit(socket.socket().connect_ex(('127.0.0.1',8501))==0)"; then
+    echo
+    echo "Another copy of the app is already running at http://localhost:8501"
+    echo "Close every other Terminal window that is running the app, then start it again."
+    read -r -p "Press Enter to close." _
+    exit 1
+fi
+
 echo
 echo "The app is starting and will open in your browser at http://localhost:8501"
 echo "Keep this window open while you use the app. Close it to stop the app."

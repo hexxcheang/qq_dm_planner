@@ -22,6 +22,16 @@ if errorlevel 1 (
     exit /b 1
 )
 
+".venv\Scripts\python.exe" -c "import socket,sys; sys.exit(socket.socket().connect_ex(('127.0.0.1',8501))==0)"
+if errorlevel 1 (
+    echo.
+    echo Another copy of the app is already running at http://localhost:8501
+    echo Close every other black or PowerShell window that is running the app,
+    echo then double-click start_app.bat again.
+    pause
+    exit /b 1
+)
+
 echo.
 echo The app is starting and will open in your browser at http://localhost:8501
 echo Keep this window open while you use the app. Close it to stop the app.

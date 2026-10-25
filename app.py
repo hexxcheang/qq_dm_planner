@@ -16,6 +16,7 @@ import pandas as pd
 import streamlit as st
 from openpyxl import load_workbook
 
+from docgen import VERSION
 from docgen.generator import INVOICE_TEMPLATE, find_soffice, generate_documents
 from docgen.models import Customer, LineItem, PurchaseOrder
 from docgen.numbering import Register, do_no, invoice_no
@@ -67,6 +68,8 @@ with st.sidebar:
                            help="Needs LibreOffice installed.")
     if not has_soffice:
         st.caption("Install LibreOffice to get PDFs as well as Excel files.")
+    st.divider()
+    st.caption(f"Version {VERSION}")
 
 st.subheader("1. Upload the customer's Purchase Order")
 upload = st.file_uploader("PO file", type=[t.lstrip(".") for t in SUPPORTED_TYPES])
