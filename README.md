@@ -27,6 +27,26 @@ in the app for a different customer.
 The item table grows when a PO has more lines than the template has room for,
 and the page is set to print on one page.
 
+## Quotation (customer)
+
+In the **Quotation** tab:
+
+1. Enter the customer's company name, address, person in charge and email
+   (or pick a customer you quoted before).
+2. Type each item's **DM product code** (e.g. `28160140`) or **Chiopt model
+   no.** (e.g. `FA0401C`) and the quantity. The app finds the item in the DMO
+   price list and prices it at **JM Buying Price (SGD) ÷ 0.65**, rounded to
+   cents.
+3. The description is the **product code** followed by the item's series
+   heading from the price list, e.g. `28160140, 1/1.8" 5MP FA Series`. Items
+   the list has no product code for (some accessories and special lenses)
+   use the model no. instead, and the app says so.
+
+The quotation gets Quotation No. `Q[YYMMDD-NN]` for today, Valid Till exactly
+one month later (same day next month), the items and the Total (SGD). A
+typed unit price overrides the list. The quotation template is uploaded once
+in the app, like the PO template.
+
 ## PO to supplier (Hunan Chiopt)
 
 In the **PO to supplier** tab, type each item's **DM product code** (e.g.
@@ -44,7 +64,7 @@ type the price in the table. A typed price always overrides the list.
 The PO gets PO# `PO[YYMMDD-NN]` for the PO date (today unless changed), the
 delivery date 10 days later, the items and the Total (USD).
 
-The PO template and the two price lists hold buying prices and supplier
+The PO and quotation templates and the two price lists hold buying prices and
 contacts, so they are **not** in this repository. Upload them once in the app
 (the "Price lists & PO template" box); they are stored on your computer in
 the `private` folder, which git ignores. Upload a list again when it changes.
@@ -112,5 +132,6 @@ python -m pytest
 - `docgen/numbering.py` – document numbers and the register of used numbers
 - `docgen/pricing.py` – supplier price lookup (product code → model → USD price)
 - `docgen/supplier_po.py` – fills the supplier PO template
+- `docgen/quotation.py` – fills the quotation template
 - `docgen/private_files.py` – the uploaded price lists / PO template in `private/`
 - `app.py` – the Streamlit page

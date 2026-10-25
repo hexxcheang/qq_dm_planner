@@ -11,7 +11,8 @@ import pytest
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Border, Side
 
-from docgen.private_files import CHIOPT_PRICES, DMO_PRICES, PO_TEMPLATE, PrivateStore, classify
+from docgen.private_files import (CHIOPT_PRICES, DMO_PRICES, PO_TEMPLATE, QUOTATION_TEMPLATE,
+                                  PrivateStore, classify)
 from docgen.pricing import PriceBook
 from docgen.supplier_po import POLine, SupplierPO, build_supplier_po, generate_supplier_po
 
@@ -120,10 +121,12 @@ def test_classify_and_store(tmp_path, chiopt_list, dmo_list, po_template):
     assert classify(dmo_list) == DMO_PRICES
     assert classify(po_template) == PO_TEMPLATE
     store = PrivateStore(tmp_path / "private")
-    assert len(store.missing()) == 3
+    supplier_files = (PO_TEMPLATE, CHIOPT_PRICES, DMO_PRICES)
+    assert store.missing(supplier_files) == list(supplier_files)
     for path in (chiopt_list, dmo_list, po_template):
         store.save(path, path.name)
-    assert store.missing() == []
+    assert store.missing(supplier_files) == []
+    assert store.missing() == [QUOTATION_TEMPLATE]
     assert store.describe(PO_TEMPLATE).startswith("po_template.xlsx, saved")
 
 

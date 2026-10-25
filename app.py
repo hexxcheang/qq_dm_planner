@@ -4,6 +4,8 @@ Tab 1: upload a customer PO -> check the details -> download the Invoice and
 Delivery Order.
 Tab 2: list product codes / model numbers -> download a PO for the supplier
 (Hunan Chiopt), priced from the price lists.
+Tab 3: customer details + product codes / model numbers -> download a
+quotation, priced from the DMO price list.
 
 Run with:  streamlit run app.py
 """
@@ -24,17 +26,25 @@ from docgen.generator import INVOICE_TEMPLATE, generate_documents
 from docgen.models import Customer, LineItem, PurchaseOrder
 from docgen.numbering import Register, do_no, invoice_no
 from docgen.po_parser import SUPPORTED_TYPES, ParseError, claude_available, parse_po
-from docgen.pricing import PriceBook, normalize
-from docgen.private_files import CHIOPT_PRICES, DMO_PRICES, KINDS, PO_TEMPLATE, PrivateStore
+from docgen.pricing import QUOTE_FACTOR, DmoCatalog, PriceBook, normalize
+from docgen.private_files import (CHIOPT_PRICES, DMO_PRICES, PO_TEMPLATE, QUOTATION_TEMPLATE,
+                                  Kind, PrivateStore)
+from docgen.quotation import (CustomerBook, Quotation, QuoteCustomer, QuoteLine,
+                              generate_quotation, quotation_no)
 from docgen.supplier_po import DELIVERY_DAYS, POLine, SupplierPO, generate_supplier_po, po_no
 
 ROOT = Path(__file__).resolve().parent
 OUTPUT_DIR = ROOT / "output"
 REGISTER = Register(ROOT / "data" / "register.json")
 PO_REGISTER = Register(ROOT / "data" / "supplier_po_register.json")
+QUOTE_REGISTER = Register(ROOT / "data" / "quotation_register.json")
+CUSTOMERS = CustomerBook(ROOT / "data" / "quote_customers.json")
 STORE = PrivateStore()
 ITEM_COLUMNS = ["Description", "Qty", "Units", "Unit Price"]
 ORDER_COLUMNS = ["Code", "Qty", "Unit Price (USD)"]
+QUOTE_COLUMNS = ["Code", "Qty", "Unit Price (SGD)"]
+SUPPLIER_FILES = (PO_TEMPLATE, CHIOPT_PRICES, DMO_PRICES)
+QUOTATION_FILES = (QUOTATION_TEMPLATE, DMO_PRICES)
 
 
 @st.cache_data
@@ -200,19 +210,18 @@ def load_price_book(chiopt: str, dmo: str, _stamp: tuple) -> PriceBook:
     return PriceBook.from_files(Path(chiopt), Path(dmo))
 
 
-def private_files_setup() -> None:
-    missing = STORE.missing()
-    with st.expander("Price lists & PO template" + ("" if missing else " ✅"),
-                     expanded=bool(missing)):
-        st.caption("These files hold buying prices and supplier details, so they are kept only "
-                   "on this computer (in the app's `private` folder), never online. Upload them "
-                   "once; upload again whenever a list is updated.")
-        for kind in KINDS:
+def private_files_setup(kinds: tuple[Kind, ...], title: str, key: str) -> None:
+    missing = STORE.missing(kinds)
+    with st.expander(title + ("" if missing else " ✅"), expanded=bool(missing)):
+        st.caption("These files hold buying prices and contacts, so they are kept only on this "
+                   "computer (in the app's `private` folder), never online. Upload them once; "
+                   "upload again whenever one is updated.")
+        for kind in kinds:
             described = STORE.describe(kind)
             mark = "✅" if described else "❌"
             st.markdown(f"{mark} **{kind.label}** – {described or f'not uploaded (e.g. {kind.example})'}")
-        uploads = st.file_uploader("Upload the Excel files (you can select all three at once)",
-                                   type=["xlsx"], accept_multiple_files=True, key="private_upload")
+        uploads = st.file_uploader("Upload the Excel files (you can select several at once)",
+                                   type=["xlsx"], accept_multiple_files=True, key=key)
         if uploads:
             done = st.session_state.setdefault("private_done", set())
             changed = False
@@ -229,7 +238,7 @@ def private_files_setup() -> None:
                     st.success(f"Saved {up.name} as the {kind.label}.")
                     changed = True
                 else:
-                    st.error(f"{up.name} doesn't look like the PO template or either price list.")
+                    st.error(f"{up.name} doesn't look like a PO/quotation template or a price list.")
             if changed:
                 st.rerun()
 
@@ -241,8 +250,8 @@ def order_frame() -> pd.DataFrame:
 
 def supplier_po_page() -> None:
     st.caption("Supplier: **Hunan Chiopt Optical Technology Co., Ltd** · prices in USD")
-    private_files_setup()
-    if STORE.missing():
+    private_files_setup(SUPPLIER_FILES, "Price lists & PO template", "private_upload_po")
+    if STORE.missing(SUPPLIER_FILES):
         st.info("Upload the files above to start making supplier POs.")
         return
 
@@ -332,6 +341,133 @@ def supplier_po_page() -> None:
         show_pdfs([("Purchase Order", pdf)])
 
 
+# --------------------------------------------------------------------------- Quotation
+
+
+@st.cache_resource
+def load_catalog(dmo: str, _stamp: float) -> DmoCatalog:
+    # _stamp (file modification time) makes a newly uploaded list load again.
+    return DmoCatalog.from_file(Path(dmo))
+
+
+def customer_form() -> QuoteCustomer:
+    known = CUSTOMERS.all()
+    names = [c.company for c in known]
+    choice = st.selectbox("Customer", ["➕ New customer"] + names,
+                          help="Customers you quoted before are remembered here.")
+    picked = known[names.index(choice)] if choice in names else QuoteCustomer()
+    k = f"q_{choice}"
+    col1, col2 = st.columns(2)
+    with col1:
+        company = st.text_input("Company name", value=picked.company, key=f"{k}_company")
+        address1 = st.text_input("Address line 1", value=picked.address1, key=f"{k}_a1")
+        address2 = st.text_input("Address line 2", value=picked.address2, key=f"{k}_a2")
+    with col2:
+        person = st.text_input("Person in charge", value=picked.person, key=f"{k}_person")
+        email = st.text_input("Email", value=picked.email, key=f"{k}_email")
+    return QuoteCustomer(company.strip(), address1.strip(), address2.strip(), person.strip(),
+                         email.strip())
+
+
+def quotation_page() -> None:
+    st.caption(f"Prices: JM Buying Price (SGD) from the DMO price list ÷ {QUOTE_FACTOR}")
+    private_files_setup(QUOTATION_FILES, "Price list & quotation template", "private_upload_quote")
+    if STORE.missing(QUOTATION_FILES):
+        st.info("Upload the files above to start making quotations.")
+        return
+    dmo = STORE.path(DMO_PRICES)
+    catalog = load_catalog(str(dmo), dmo.stat().st_mtime)
+
+    st.subheader("1. Customer (Attention)")
+    customer = customer_form()
+
+    st.subheader("2. Items")
+    st.caption("Type a **DM product code** (e.g. 28160140) or a **Chiopt model no.** "
+               "(e.g. FA0401C) and the quantity. The quotation shows the product code and its "
+               "series. Leave Unit Price empty to use the price list; type a price to override it.")
+    edited = st.data_editor(
+        pd.DataFrame({"Code": [""], "Qty": [1.0], "Unit Price (SGD)": [float("nan")]},
+                     columns=QUOTE_COLUMNS),
+        key="q_items", num_rows="dynamic", width="stretch",
+        column_config={
+            "Code": st.column_config.TextColumn("Product code / Model no.", width="medium"),
+            "Qty": st.column_config.NumberColumn(min_value=0, step=1, default=1),
+            "Unit Price (SGD)": st.column_config.NumberColumn(
+                "Unit Price (SGD) – optional", min_value=0, format="%.2f"),
+        },
+    )
+
+    lines: list[QuoteLine] = []
+    preview, problems = [], []
+    for row in edited.itertuples(index=False):
+        code, qty, override = row[0], row[1], row[2]
+        if blank(code) or not normalize(code):
+            continue
+        qty = 0.0 if blank(qty) else float(qty)
+        found = catalog.resolve(code)
+        typed = not blank(override)
+        price = float(override) if typed else found.unit_price
+        if price is None:
+            problems.append(f"{found.code}: {found.note or 'enter the price'}")
+        elif qty <= 0:
+            problems.append(f"{found.code}: enter a quantity")
+        else:
+            lines.append(QuoteLine(found.description, qty, price))
+        preview.append({
+            "Code": found.code,
+            "Description (on quotation)": found.description,
+            "Found by": found.matched_by or "–",
+            "JM Buying Price (SGD)": found.item.jm_price_sgd if found.item else None,
+            "Unit Price (SGD)": None if price is None else round(price, 2),
+            "Price from": "typed" if typed else (f"list ÷ {QUOTE_FACTOR}" if price else "–"),
+            "Amount (SGD)": None if price is None else round(qty * round(price, 2), 2),
+            "Note": found.note,
+        })
+    if preview:
+        money = st.column_config.NumberColumn(format="%.2f")
+        st.dataframe(pd.DataFrame(preview), hide_index=True, width="stretch",
+                     column_config={"JM Buying Price (SGD)": money, "Unit Price (SGD)": money,
+                                    "Amount (SGD)": money})
+        st.markdown(f"**Total (SGD):** {sum(line.amount for line in lines):,.2f}")
+
+    st.subheader("3. Quotation details")
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        q_date = st.date_input("Quotation date", value=date.today(), format="DD/MM/YYYY",
+                               key="q_date")
+    with col2:
+        seq = st.number_input("Running number for this date", min_value=1, max_value=99, step=1,
+                              value=QUOTE_REGISTER.next_seq(q_date), key=f"q_seq_{q_date}")
+    draft = Quotation(q_date, int(seq), customer, lines)
+    with col3:
+        st.markdown(f"**Quotation No.:** `{draft.quotation_no}`  \n"
+                    f"**Valid till:** {draft.valid_till:%d %b %Y} (one month)")
+    just_made = st.session_state.get("q_generated")
+    if seq <= QUOTE_REGISTER.last_seq(q_date) and just_made != quotation_no(q_date, seq):
+        st.warning(f"{quotation_no(q_date, seq)} has already been used.")
+
+    st.subheader("4. Generate")
+    if not customer.company:
+        problems.append("Enter the customer's company name.")
+    if not lines and not preview:
+        problems.append("Add at least one item.")
+    for p in problems:
+        st.caption(f"⚠️ {p}")
+    if st.button("Generate Quotation", type="primary", disabled=bool(problems)):
+        with st.spinner("Creating the quotation…"):
+            pdf = generate_quotation(draft, STORE.path(QUOTATION_TEMPLATE),
+                                     OUTPUT_DIR / q_date.isoformat())
+        QUOTE_REGISTER.record(q_date, int(seq), customer.company)
+        CUSTOMERS.remember(customer)
+        st.session_state["q_generated"] = draft.quotation_no
+        st.session_state["q_pdf"] = str(pdf)
+
+    if st.session_state.get("q_pdf"):
+        pdf = Path(st.session_state["q_pdf"])
+        st.success(f"Created {st.session_state['q_generated']} (saved in {pdf.parent}).")
+        show_pdfs([("Quotation", pdf)])
+
+
 # --------------------------------------------------------------------------- page
 
 st.set_page_config(page_title="DM Optical – Documents", page_icon="🧾", layout="wide")
@@ -349,7 +485,10 @@ with st.sidebar:
     st.divider()
     st.caption(f"Version {VERSION}")
 
-invoice_tab, supplier_tab = st.tabs(["🧾 Invoice & DO (customer)", "📦 PO to supplier (Chiopt)"])
+quote_tab, invoice_tab, supplier_tab = st.tabs(
+    ["💬 Quotation (customer)", "🧾 Invoice & DO (customer)", "📦 PO to supplier (Chiopt)"])
+with quote_tab:
+    quotation_page()
 with invoice_tab:
     invoice_page(use_claude)
 with supplier_tab:

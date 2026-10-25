@@ -10,6 +10,9 @@ Two price lists are used, read straight from the Excel files:
 A code typed in the app can be either a DM product code or a Chiopt model
 number. Prices are read from the values Excel last calculated and saved,
 rounded to cents.
+
+Customer quotations use the DMO list alone: the "JM Buying Price (SGD)"
+divided by QUOTE_FACTOR, described by product code and series heading.
 """
 
 from __future__ import annotations
@@ -24,6 +27,9 @@ MODEL_HEADER = re.compile(r"model\s*no", re.I)
 DM_PRICE_HEADER = re.compile(r"dm\s*buying\s*price\s*\(usd\)", re.I)
 PRODUCT_CODE_HEADER = re.compile(r"product\s*code\s*\(dm\s*optical\)", re.I)
 CHIOPT_MODEL_HEADER = re.compile(r"model\s*no\.?\s*\(chiopt\)", re.I)
+JM_PRICE_HEADER = re.compile(r"jm\s*buying\s*price\s*\(sgd\)", re.I)
+
+QUOTE_FACTOR = 0.65  # customer quotation price = JM buying price (SGD) / 0.65
 
 
 def normalize(code) -> str:
@@ -86,27 +92,119 @@ def read_chiopt_prices(path: Path) -> dict[str, ChioptPrice]:
     return prices
 
 
-def read_product_codes(path: Path) -> dict[str, str]:
-    """DM product code -> Chiopt model no., from every sheet of the DMO list."""
+@dataclass
+class DmoItem:
+    code: str | None  # DM product code as shown in the list; None when it has none
+    model: str  # Chiopt model no.
+    jm_price_sgd: float | None
+    series: str  # the series heading above the item, e.g. '1/1.8" 5MP FA Series'
+    sheet: str
+
+
+def _code_text(value) -> str | None:
+    if isinstance(value, float) and value.is_integer():
+        value = int(value)
+    text = _text(value)
+    return text if text and text != "-" else None
+
+
+def read_dmo_catalog(path: Path) -> list[DmoItem]:
+    """Every item in the DMO lens price list, with its series heading.
+
+    Each sheet has a header row naming "Model No. (Chiopt)" and usually
+    "Product Code (DM Optical)" and "JM Buying Price (SGD)". A row whose only
+    content is a text in column A is a series heading for the items below it.
+    """
     wb = load_workbook(path, data_only=True, read_only=True)
-    codes: dict[str, str] = {}
+    items: list[DmoItem] = []
     for ws in wb.worksheets:
-        code_col = model_col = None
+        code_col = model_col = price_col = None
+        series = ""
         for row in ws.iter_rows(values_only=True):
             texts = [_text(v) for v in row]
-            if any(PRODUCT_CODE_HEADER.search(t) for t in texts):
-                code_col = next(i for i, t in enumerate(texts) if PRODUCT_CODE_HEADER.search(t))
-                model_col = next((i for i, t in enumerate(texts) if CHIOPT_MODEL_HEADER.search(t)),
+            filled = [i for i, t in enumerate(texts) if t]
+            if filled == [0] and isinstance(row[0], str):
+                series = texts[0]
+                continue
+            if any(CHIOPT_MODEL_HEADER.search(t) for t in texts):
+                model_col = next(i for i, t in enumerate(texts) if CHIOPT_MODEL_HEADER.search(t))
+                code_col = next((i for i, t in enumerate(texts) if PRODUCT_CODE_HEADER.search(t)),
+                                None)
+                price_col = next((i for i, t in enumerate(texts) if JM_PRICE_HEADER.search(t)),
                                  None)
                 continue
-            if code_col is None or model_col is None:
+            if model_col is None or model_col >= len(texts) or not texts[model_col]:
                 continue
-            code = normalize(row[code_col] if code_col < len(row) else None)
-            model = texts[model_col] if model_col < len(texts) else ""
-            if code and code != "-" and model:
-                codes.setdefault(code, model)
+            code = _code_text(row[code_col]) if code_col is not None and code_col < len(row) else None
+            price = row[price_col] if price_col is not None and price_col < len(row) else None
+            price = float(price) if isinstance(price, (int, float)) and price > 0 else None
+            items.append(DmoItem(code, texts[model_col], price, series.strip(), ws.title))
     wb.close()
+    return items
+
+
+def read_product_codes(path: Path) -> dict[str, str]:
+    """DM product code -> Chiopt model no., from every sheet of the DMO list."""
+    codes: dict[str, str] = {}
+    for item in read_dmo_catalog(path):
+        if item.code:
+            codes.setdefault(normalize(item.code), item.model)
     return codes
+
+
+@dataclass
+class QuoteResolved:
+    code: str  # as typed
+    item: DmoItem | None
+    unit_price: float | None  # JM buying price / QUOTE_FACTOR, rounded to cents
+    description: str
+    matched_by: str
+    note: str = ""
+
+
+class DmoCatalog:
+    """Customer quotation prices: JM Buying Price (SGD) / QUOTE_FACTOR."""
+
+    def __init__(self, items: list[DmoItem]):
+        self.by_code: dict[str, DmoItem] = {}
+        self.by_model: dict[str, DmoItem] = {}
+        for item in items:
+            if item.code:
+                self.by_code.setdefault(normalize(item.code), item)
+            key = normalize(item.model)
+            # Prefer the entry that has a product code and a price.
+            current = self.by_model.get(key)
+            if current is None or (_rank(item) > _rank(current)):
+                self.by_model[key] = item
+
+    @classmethod
+    def from_file(cls, path: Path) -> "DmoCatalog":
+        return cls(read_dmo_catalog(path))
+
+    def resolve(self, code) -> QuoteResolved:
+        key, shown = normalize(code), _text(code)
+        if key in self.by_code:
+            item, matched_by = self.by_code[key], "DM product code"
+        elif key in self.by_model:
+            item, matched_by = self.by_model[key], "Chiopt model no."
+        else:
+            return QuoteResolved(shown, None, None, shown, "", "Not found in the DMO price list")
+        notes = []
+        if item.code:
+            description = item.code
+        else:
+            description = item.model
+            notes.append("no DM product code in the list – model no. used")
+        if item.series:
+            description = f"{description}, {item.series}"
+        price = round(item.jm_price_sgd / QUOTE_FACTOR, 2) if item.jm_price_sgd else None
+        if price is None:
+            notes.append("no JM buying price – enter the price")
+        return QuoteResolved(shown, item, price, description, matched_by, "; ".join(notes))
+
+
+def _rank(item: DmoItem) -> int:
+    return (item.code is not None) + (item.jm_price_sgd is not None)
 
 
 def looks_like_chiopt_list(path: Path) -> bool:

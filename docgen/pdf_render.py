@@ -32,6 +32,7 @@ FONT_DIR = Path(__file__).resolve().parent / "fonts"
 REGULAR, BOLD = "Carlito", "Carlito-Bold"
 
 EMU_PER_PT = 12700
+HYPERLINK_RGB = (5 / 255, 99 / 255, 193 / 255)  # Excel's hyperlink blue
 MAX_DIGIT_PX = 7  # Calibri 11, Excel's default font
 PADDING = 2.0  # pt between a cell edge and its text
 LINE_SPACING = 1.22  # Calibri line height relative to font size
@@ -354,15 +355,25 @@ def _draw_text(pdf: canvas.Canvas, cell, value, box, bordered: bool = False) -> 
         block_top = y1 - block_h - 1
 
     pdf.setFont(font, size)
-    pdf.setFillColorRGB(*_font_rgb(cell.font))
+    color = HYPERLINK_RGB if cell.hyperlink is not None else _font_rgb(cell.font)
+    underline = cell.hyperlink is not None or bool(cell.font is not None and cell.font.u)
+    pdf.setFillColorRGB(*color)
+    pdf.setStrokeColorRGB(*color)
     for i, line in enumerate(lines):
         baseline = block_top + i * line_h + size * 0.98
+        width = pdfmetrics.stringWidth(line, font, size)
         if horizontal == "right":
-            pdf.drawRightString(x1 - PADDING, -baseline, line)
+            start = x1 - PADDING - width
         elif horizontal in ("center", "centerContinuous"):
-            pdf.drawCentredString((x0 + x1) / 2, -baseline, line)
+            start = (x0 + x1 - width) / 2
         else:
-            pdf.drawString(x0 + PADDING, -baseline, line)
+            start = x0 + PADDING
+        pdf.drawString(start, -baseline, line)
+        if underline and line:
+            pdf.setLineWidth(size / 18)
+            pdf.line(start, -(baseline + size * 0.12), start + width, -(baseline + size * 0.12))
+    pdf.setFillColorRGB(0, 0, 0)
+    pdf.setStrokeColorRGB(0, 0, 0)
 
 
 def _draw_borders(pdf: canvas.Canvas, ws: Worksheet, layout: _Layout, last_row: int,
