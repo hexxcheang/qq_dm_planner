@@ -1,9 +1,11 @@
-# DM Optical – Invoice & DO generator
+# DM Optical – document generator
 
-Upload a customer's Purchase Order and get a filled-in **Tax Invoice** and
-**Delivery Order** as PDFs, laid out from the company templates in
-`templates/`.
-(Quotation and supplier PO will come later.)
+Makes DM Optical's business documents as PDFs, laid out from the company
+templates:
+
+- **Quotation** for a customer, priced from the DMO price list
+- **Tax Invoice** and **Delivery Order** from a customer's Purchase Order
+- **Purchase Order** to the supplier (Hunan Chiopt), priced from the price lists
 
 ## What gets filled in
 
