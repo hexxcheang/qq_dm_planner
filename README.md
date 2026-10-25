@@ -26,36 +26,43 @@ in the app for a different customer.
 The item table grows when a PO has more lines than the template has room for,
 and the page is set to print on one page.
 
-## Setup (one time)
+## Start the app
 
-1. Install Python 3.10 or newer from https://www.python.org (on Windows, tick
-   "Add Python to PATH").
-2. In this folder, run:
+1. Install Python 3.10 or newer from https://www.python.org/downloads/ (one
+   time). On Windows, tick **"Add python.exe to PATH"** on the installer's
+   first screen.
+2. Download this folder (GitHub: **Code → Download ZIP**) and unzip it.
+3. Start it:
+   - **Windows:** double-click `start_app.bat`.
+   - **Mac:** right-click `start_app.command` → **Open**. If macOS refuses,
+     open Terminal, type `bash ` (with a space), drag the file into the
+     window and press Enter.
 
-   ```
-   pip install -r requirements.txt
-   ```
+   The first start installs what the app needs (a few minutes). The app then
+   opens in your browser at http://localhost:8501. Keep the black window open
+   while you use it; closing it stops the app.
 
-3. Optional: install [LibreOffice](https://www.libreoffice.org) to also get
-   PDF copies of the Invoice and DO.
-4. Optional: set an Anthropic API key so Claude reads the PO. Without it, the
-   built-in reader handles text PDFs, Excel and CSV POs that have a normal item
-   table. With it, any layout works, including scanned PDFs and photos.
+Optional extras:
 
-   ```
-   # Windows (PowerShell)
-   setx ANTHROPIC_API_KEY "sk-ant-..."
-   # macOS / Linux
-   export ANTHROPIC_API_KEY="sk-ant-..."
-   ```
+- Install [LibreOffice](https://www.libreoffice.org) to also get PDF copies
+  of the Invoice and DO.
+- Set an Anthropic API key so Claude reads the PO. Without it, the built-in
+  reader handles text PDFs, Excel and CSV POs that have a normal item table.
+  With it, any layout works, including scanned PDFs and photos.
+
+  ```
+  # Windows (PowerShell), then restart the app
+  setx ANTHROPIC_API_KEY "sk-ant-..."
+  # macOS
+  export ANTHROPIC_API_KEY="sk-ant-..."
+  ```
+
+Developers can also run `pip install -r requirements.txt` and
+`streamlit run app.py` directly.
 
 ## Use
 
-```
-streamlit run app.py
-```
-
-A page opens in your browser:
+In the page that opens:
 
 1. Upload the customer's PO (PDF, Excel, CSV, or a photo if Claude is on).
 2. Check the PO number and items it read, and fix anything in the table.

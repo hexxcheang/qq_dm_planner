@@ -1,0 +1,8 @@
+[server]
+# The start scripts open the browser themselves; headless also skips
+# Streamlit's first-run email prompt, which would otherwise wait for input.
+headless = true
+port = 8501
+
+[browser]
+gatherUsageStats = false
