@@ -1,2 +1,2 @@
 # Shown in the app so it is easy to tell which version is running.
-VERSION = "1.3 – PDF output"
+VERSION = "1.4 – supplier PO"

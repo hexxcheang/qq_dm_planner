@@ -27,6 +27,28 @@ in the app for a different customer.
 The item table grows when a PO has more lines than the template has room for,
 and the page is set to print on one page.
 
+## PO to supplier (Hunan Chiopt)
+
+In the **PO to supplier** tab, type each item's **DM product code** (e.g.
+`73620230`) or **Chiopt model no.** (e.g. `ML5010C`) and the quantity:
+
+1. A DM product code is looked up in the DMO price list ("Product Code (DM
+   Optical)" → "Model No. (Chiopt)").
+2. The model no. is looked up in the Chiopt price list, and its "DM Buying
+   Price (USD)" becomes the unit price (rounded to cents).
+3. A model no. typed directly skips step 1.
+
+If a model has no DM buying price (some sheets of the Chiopt list have none),
+type the price in the table. A typed price always overrides the list.
+
+The PO gets PO# `PO[YYMMDD-NN]` for the PO date (today unless changed), the
+delivery date 10 days later, the items and the Total (USD).
+
+The PO template and the two price lists hold buying prices and supplier
+contacts, so they are **not** in this repository. Upload them once in the app
+(the "Price lists & PO template" box); they are stored on your computer in
+the `private` folder, which git ignores. Upload a list again when it changes.
+
 ## Start the app
 
 1. Install Python 3.10 or newer from https://www.python.org/downloads/ (one
@@ -88,4 +110,7 @@ python -m pytest
   LibreOffice needed; Calibri is drawn with the metric-compatible Carlito font,
   `docgen/fonts/`, SIL Open Font License)
 - `docgen/numbering.py` – document numbers and the register of used numbers
+- `docgen/pricing.py` – supplier price lookup (product code → model → USD price)
+- `docgen/supplier_po.py` – fills the supplier PO template
+- `docgen/private_files.py` – the uploaded price lists / PO template in `private/`
 - `app.py` – the Streamlit page

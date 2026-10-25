@@ -35,11 +35,53 @@ EMU_PER_PT = 12700
 MAX_DIGIT_PX = 7  # Calibri 11, Excel's default font
 PADDING = 2.0  # pt between a cell edge and its text
 LINE_SPACING = 1.22  # Calibri line height relative to font size
-WRAP_TOLERANCE = 1.02  # Excel measures hinted screen fonts, a little narrower than print
+# Excel measures hinted screen fonts, a little narrower than print, so text
+# that fits in Excel can be a few points too wide here. Where no border is in
+# the way that slack is allowed; next to a border, wrapping is strict.
+WRAP_SLACK = 4.0
 BORDER_WIDTHS = {"hair": 0.25, "thin": 0.6, "medium": 1.2, "thick": 1.8, "double": 0.5,
                  "dashed": 0.6, "dotted": 0.6, "mediumDashed": 1.2}
 
+# Chinese text needs a CJK font. These ship with Windows / macOS / common Linux
+# desktops; the first one that loads is embedded (subset) in the PDF.
+CJK_FONT_CANDIDATES = [
+    (r"C:\Windows\Fonts\msyh.ttc", 0),  # Microsoft YaHei
+    (r"C:\Windows\Fonts\msyh.ttf", 0),
+    (r"C:\Windows\Fonts\simsun.ttc", 0),  # SimSun
+    (r"C:\Windows\Fonts\simhei.ttf", 0),
+    (r"C:\Windows\Fonts\Deng.ttf", 0),
+    ("/System/Library/Fonts/Supplemental/Arial Unicode.ttf", 0),
+    ("/Library/Fonts/Arial Unicode.ttf", 0),
+    ("/System/Library/Fonts/STHeiti Light.ttc", 0),
+    ("/usr/share/fonts/truetype/wqy/wqy-microhei.ttc", 0),
+    ("/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc", 0),
+    ("/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf", 0),
+]
+CJK_TEXT = re.compile(r"[\u2e80-\u9fff\uf900-\ufaff\uff00-\uffef\u3000-\u303f]")
+
 _fonts_registered = False
+_cjk_font: str | None = None
+
+
+def cjk_font() -> str:
+    """Name of a registered font that can draw Chinese characters."""
+    global _cjk_font
+    if _cjk_font is None:
+        for path, index in CJK_FONT_CANDIDATES:
+            if not Path(path).exists():
+                continue
+            try:
+                pdfmetrics.registerFont(TTFont("CJK", path, subfontIndex=index))
+            except Exception:  # e.g. a font with CFF outlines, which reportlab cannot embed
+                continue
+            _cjk_font = "CJK"
+            break
+        else:
+            from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+
+            pdfmetrics.registerFont(UnicodeCIDFont("STSong-Light"))  # PDF viewers supply it
+            _cjk_font = "STSong-Light"
+    return _cjk_font
 
 
 def _register_fonts() -> None:
@@ -185,7 +227,7 @@ def _wrap(text: str, font: str, size: float, width: float) -> list[str]:
         current = ""
         for word in words:
             candidate = f"{current} {word}" if current else word
-            if current and pdfmetrics.stringWidth(candidate, font, size) > width * WRAP_TOLERANCE:
+            if current and pdfmetrics.stringWidth(candidate, font, size) > width:
                 lines.append(current)
                 current = word
             else:
@@ -276,22 +318,28 @@ def render_sheet(ws: Worksheet,
             max_row, max_col = (rng.max_row, rng.max_col) if rng else (cell.row, cell.column)
             box = (layout.x(cell.column), layout.y(cell.row),
                    layout.x(max_col + 1), layout.y(max_row + 1))
-            _draw_text(pdf, cell, value, box)
+            right_edge = ws.cell(cell.row, max_col).border.right
+            next_left = ws.cell(cell.row, max_col + 1).border.left
+            bordered = bool((right_edge and right_edge.style) or (next_left and next_left.style))
+            _draw_text(pdf, cell, value, box, bordered)
 
     pdf.showPage()
     pdf.save()
     return buf.getvalue()
 
 
-def _draw_text(pdf: canvas.Canvas, cell, value, box) -> None:
+def _draw_text(pdf: canvas.Canvas, cell, value, box, bordered: bool = False) -> None:
     x0, y0, x1, y1 = box
     font, size = _font_name(cell.font), _font_size(cell.font)
     text = format_value(value, cell.number_format)
+    if CJK_TEXT.search(text):
+        font = cjk_font()
     align = cell.alignment
     horizontal = align.horizontal or ("right" if isinstance(value, (int, float, date, datetime))
                                       and not isinstance(value, bool) else "left")
     if align.wrap_text:
-        lines = _wrap(text, font, size, max(1.0, x1 - x0 - 1.5))  # Excel wraps ~1px from each edge
+        room = x1 - x0 - 2 * PADDING + (0 if bordered else WRAP_SLACK)
+        lines = _wrap(text, font, size, max(1.0, room))
     else:
         lines = [text.replace("\n", " ")]
 
