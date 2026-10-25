@@ -3,16 +3,15 @@
 from __future__ import annotations
 
 import re
-import shutil
-import subprocess
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
 
-from openpyxl import load_workbook
+from openpyxl import Workbook, load_workbook
 
 from .models import Customer, PurchaseOrder
 from .numbering import do_no, invoice_no
+from .pdf_render import read_image_crops, render_sheet
 from .xlsx_utils import find_label, layout_item_block
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -33,10 +32,8 @@ DO_ITEMS_FIRST, DO_ITEMS_LAST = 16, 17
 class GeneratedDocs:
     invoice_no: str
     do_no: str
-    invoice_xlsx: Path
-    do_xlsx: Path
-    invoice_pdf: Path | None = None
-    do_pdf: Path | None = None
+    invoice_pdf: Path
+    do_pdf: Path
 
 
 def _number(value: float) -> float | int:
@@ -56,8 +53,9 @@ def _write_customer(ws, anchor: tuple[str, int], customer: Customer) -> None:
         ws[f"{col}{row + offset}"] = text or None
 
 
-def build_invoice(po: PurchaseOrder, doc_date: date, seq: int, out_path: Path,
-                  template: Path = INVOICE_TEMPLATE) -> Path:
+def build_invoice(po: PurchaseOrder, doc_date: date, seq: int,
+                  template: Path = INVOICE_TEMPLATE) -> Workbook:
+    """The invoice template filled in for ``po`` (in memory)."""
     wb = load_workbook(template)
     ws = wb.active
 
@@ -86,14 +84,12 @@ def build_invoice(po: PurchaseOrder, doc_date: date, seq: int, out_path: Path,
     ws[f"H{total_row}"] = f"=SUM(H{INV_ITEMS_FIRST}:H{last_item})"
     ws[f"H{due_row}"] = f"=H{total_row}"
     _fit_one_page(ws)
-
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    wb.save(out_path)
-    return out_path
+    return wb
 
 
-def build_delivery_order(po: PurchaseOrder, doc_date: date, seq: int, out_path: Path,
-                         template: Path = DO_TEMPLATE) -> Path:
+def build_delivery_order(po: PurchaseOrder, doc_date: date, seq: int,
+                         template: Path = DO_TEMPLATE) -> Workbook:
+    """The delivery order template filled in for ``po`` (in memory)."""
     wb = load_workbook(template)
     ws = wb.active
 
@@ -113,52 +109,23 @@ def build_delivery_order(po: PurchaseOrder, doc_date: date, seq: int, out_path: 
         ws[f"D{row}"] = item.description
         ws[f"F{row}"] = "N/A"
     _fit_one_page(ws)
-
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    wb.save(out_path)
-    return out_path
+    return wb
 
 
 def _safe(text: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]+", "_", text).strip("_") or "PO"
 
 
-def find_soffice() -> str | None:
-    for name in ("soffice", "libreoffice"):
-        path = shutil.which(name)
-        if path:
-            return path
-    for candidate in (r"C:\Program Files\LibreOffice\program\soffice.exe",
-                      r"C:\Program Files (x86)\LibreOffice\program\soffice.exe",
-                      "/Applications/LibreOffice.app/Contents/MacOS/soffice"):
-        if Path(candidate).exists():
-            return candidate
-    return None
-
-
-def to_pdf(xlsx: Path) -> Path | None:
-    """Convert with LibreOffice if it is installed; returns None otherwise."""
-    soffice = find_soffice()
-    if not soffice:
-        return None
-    try:
-        subprocess.run([soffice, "--headless", "--convert-to", "pdf", "--outdir",
-                        str(xlsx.parent), str(xlsx)],
-                       check=True, capture_output=True, timeout=120)
-    except (subprocess.SubprocessError, OSError):
-        return None
-    pdf = xlsx.with_suffix(".pdf")
-    return pdf if pdf.exists() else None
-
-
-def generate_documents(po: PurchaseOrder, doc_date: date, seq: int, out_dir: Path,
-                       make_pdf: bool = False) -> GeneratedDocs:
+def generate_documents(po: PurchaseOrder, doc_date: date, seq: int, out_dir: Path) -> GeneratedDocs:
+    """Create the Invoice and DO as PDFs in ``out_dir``."""
     inv_no, d_no = invoice_no(doc_date, seq), do_no(doc_date, seq)
     po_part = _safe(po.po_number)
-    inv_path = build_invoice(po, doc_date, seq, Path(out_dir) / f"{inv_no}_{po_part}.xlsx")
-    do_path = build_delivery_order(po, doc_date, seq, Path(out_dir) / f"{d_no}_{po_part}.xlsx")
-    docs = GeneratedDocs(inv_no, d_no, inv_path, do_path)
-    if make_pdf:
-        docs.invoice_pdf = to_pdf(inv_path)
-        docs.do_pdf = to_pdf(do_path)
-    return docs
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    inv_pdf = out_dir / f"{inv_no}_{po_part}.pdf"
+    do_pdf = out_dir / f"{d_no}_{po_part}.pdf"
+    inv_pdf.write_bytes(render_sheet(build_invoice(po, doc_date, seq).active,
+                                     read_image_crops(INVOICE_TEMPLATE)))
+    do_pdf.write_bytes(render_sheet(build_delivery_order(po, doc_date, seq).active,
+                                    read_image_crops(DO_TEMPLATE)))
+    return GeneratedDocs(inv_no, d_no, inv_pdf, do_pdf)

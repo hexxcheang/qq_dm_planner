@@ -1,9 +1,10 @@
 from datetime import date, datetime
 
 import pytest
-from openpyxl import load_workbook
 
-from docgen.generator import generate_documents
+import pdfplumber
+
+from docgen.generator import build_delivery_order, build_invoice, generate_documents
 from docgen.models import Customer, LineItem, PurchaseOrder
 from docgen.numbering import Register, do_no, invoice_no
 from docgen import ocr
@@ -34,9 +35,8 @@ def _po(n_items: int) -> PurchaseOrder:
 
 
 @pytest.mark.parametrize("n_items", [1, 2, 3, 8])
-def test_invoice_fields(tmp_path, n_items):
-    docs = generate_documents(_po(n_items), DAY, 3, tmp_path)
-    ws = load_workbook(docs.invoice_xlsx).active
+def test_invoice_fields(n_items):
+    ws = build_invoice(_po(n_items), DAY, 3).active
     assert ws["C5"].value == "POR13413"
     assert ws["H10"].value == datetime(2026, 9, 29)
     assert ws["H11"].value == "IN260929-03"
@@ -60,9 +60,8 @@ def test_invoice_fields(tmp_path, n_items):
 
 
 @pytest.mark.parametrize("n_items", [1, 5])
-def test_delivery_order_fields(tmp_path, n_items):
-    docs = generate_documents(_po(n_items), DAY, 1, tmp_path)
-    ws = load_workbook(docs.do_xlsx).active
+def test_delivery_order_fields(n_items):
+    ws = build_delivery_order(_po(n_items), DAY, 1).active
     assert ws["G9"].value == datetime(2026, 9, 29)
     assert ws["G10"].value == "DO260929-01"
     assert ws["G11"].value == "POR13413"
@@ -79,15 +78,37 @@ def test_delivery_order_fields(tmp_path, n_items):
     assert ws[f"A{received}"].value == "Ship Via"
 
 
-def test_customer_override(tmp_path):
+def test_customer_override():
     po = _po(1)
     po.customer = Customer("ACME PTE LTD", "1 Main St", "Singapore 123456", "Jane")
-    docs = generate_documents(po, DAY, 1, tmp_path)
-    inv = load_workbook(docs.invoice_xlsx).active
-    do = load_workbook(docs.do_xlsx).active
+    inv = build_invoice(po, DAY, 1).active
+    do = build_delivery_order(po, DAY, 1).active
     assert [inv[f"A{r}"].value for r in range(12, 16)] == po.customer.lines()
     assert [inv[f"D{r}"].value for r in range(12, 16)] == po.customer.lines()
     assert [do[f"A{r}"].value for r in range(10, 14)] == po.customer.lines()
+
+
+def _pdf_text(path) -> str:
+    with pdfplumber.open(path) as pdf:
+        assert len(pdf.pages) == 1
+        return pdf.pages[0].extract_text()
+
+
+def test_generate_pdfs(tmp_path):
+    po = PurchaseOrder("POR13495", [LineItem("73620230 (ML5010C)", 2, "Pcs", 85),
+                                    LineItem("Optical alignment kit", 1, "Set", 450.5)])
+    docs = generate_documents(po, date(2026, 10, 12), 2, tmp_path)
+    assert docs.invoice_pdf.name == "IN261012-02_POR13495.pdf"
+    assert docs.do_pdf.name == "DO261012-02_POR13495.pdf"
+    invoice = _pdf_text(docs.invoice_pdf)
+    for text in ("Tax Invoice", "POR13495", "12-Oct-26", "IN261012-02", "DO261012-02",
+                 "73620230 (ML5010C)", "170", "450.5", "$620.50"):
+        assert text in invoice, text
+    do = _pdf_text(docs.do_pdf)
+    for text in ("Delivery Order", "POR13495", "12-Oct-26", "DO261012-02", "73620230 (ML5010C)",
+                 "Optical alignment kit", "N/A"):
+        assert text in do, text
+    assert "IN261012" not in do
 
 
 def _check_sample(po: PurchaseOrder, with_units: bool = True):

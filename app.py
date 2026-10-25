@@ -17,7 +17,7 @@ import streamlit as st
 from openpyxl import load_workbook
 
 from docgen import VERSION
-from docgen.generator import INVOICE_TEMPLATE, find_soffice, generate_documents
+from docgen.generator import INVOICE_TEMPLATE, generate_documents
 from docgen.models import Customer, LineItem, PurchaseOrder
 from docgen.numbering import Register, do_no, invoice_no
 from docgen.po_parser import SUPPORTED_TYPES, ParseError, claude_available, parse_po
@@ -32,6 +32,17 @@ ITEM_COLUMNS = ["Description", "Qty", "Units", "Unit Price"]
 def template_customer() -> Customer:
     ws = load_workbook(INVOICE_TEMPLATE).active
     return Customer(*[str(ws[f"A{r}"].value or "") for r in range(12, 16)])
+
+
+def pdf_preview(path: Path):
+    """First page of a PDF as an image, to show on the page."""
+    import pypdfium2 as pdfium
+
+    pdf = pdfium.PdfDocument(str(path))
+    try:
+        return pdf[0].render(scale=1.5).to_pil()
+    finally:
+        pdf.close()
 
 
 def items_frame(po: PurchaseOrder) -> pd.DataFrame:
@@ -63,11 +74,6 @@ with st.sidebar:
                                 "unusual PO layouts.")
     if not claude_available():
         st.caption("Using the free built-in reader (works offline, reads scans too).")
-    has_soffice = find_soffice() is not None
-    make_pdf = st.checkbox("Also create PDF files", value=has_soffice, disabled=not has_soffice,
-                           help="Needs LibreOffice installed.")
-    if not has_soffice:
-        st.caption("Install LibreOffice to get PDFs as well as Excel files.")
     st.divider()
     st.caption(f"Version {VERSION}")
 
@@ -113,11 +119,13 @@ with col3:
                           help="01 for the first PO on this date, 02 for the second, …")
 st.markdown(f"**Invoice No.:** `{invoice_no(doc_date, seq)}` &nbsp;&nbsp; "
             f"**DO No.:** `{do_no(doc_date, seq)}`")
-if seq <= REGISTER.last_seq(doc_date):
+just_made = st.session_state.get("generated")
+if seq <= REGISTER.last_seq(doc_date) and not (
+        just_made and just_made.invoice_no == invoice_no(doc_date, seq)):
     st.warning(f"Number {seq:02d} has already been used for {doc_date:%d %b %Y}.")
 
 edited = st.data_editor(
-    items_frame(po), key=f"items_{file_key}", num_rows="dynamic", use_container_width=True,
+    items_frame(po), key=f"items_{file_key}", num_rows="dynamic", width="stretch",
     column_config={
         "Description": st.column_config.TextColumn(width="large", required=True),
         "Qty": st.column_config.NumberColumn(min_value=0, step=1, required=True),
@@ -155,20 +163,16 @@ if st.button("Generate Invoice & DO", type="primary", disabled=bool(problems)):
     final = PurchaseOrder(po_number=po_number.strip(), items=items, customer=customer)
     out_dir = OUTPUT_DIR / doc_date.isoformat()
     with st.spinner("Creating documents…"):
-        docs = generate_documents(final, doc_date, int(seq), out_dir, make_pdf=make_pdf)
+        docs = generate_documents(final, doc_date, int(seq), out_dir)
     REGISTER.record(doc_date, int(seq), final.po_number)
     st.session_state["generated"] = docs
 
 docs = st.session_state.get("generated")
 if docs:
-    st.success(f"Created {docs.invoice_no} and {docs.do_no} (saved in {docs.invoice_xlsx.parent}).")
-    xlsx_mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    st.success(f"Created {docs.invoice_no} and {docs.do_no} (saved in {docs.invoice_pdf.parent}).")
     c1, c2 = st.columns(2)
-    for col, label, xlsx, pdf in ((c1, "Invoice", docs.invoice_xlsx, docs.invoice_pdf),
-                                  (c2, "Delivery Order", docs.do_xlsx, docs.do_pdf)):
+    for col, label, pdf in ((c1, "Invoice", docs.invoice_pdf), (c2, "Delivery Order", docs.do_pdf)):
         with col:
-            st.download_button(f"⬇️ {label} (Excel)", xlsx.read_bytes(), file_name=xlsx.name,
-                               mime=xlsx_mime, use_container_width=True)
-            if pdf:
-                st.download_button(f"⬇️ {label} (PDF)", pdf.read_bytes(), file_name=pdf.name,
-                                   mime="application/pdf", use_container_width=True)
+            st.download_button(f"⬇️ {label} (PDF)", pdf.read_bytes(), file_name=pdf.name,
+                               mime="application/pdf", width="stretch")
+            st.image(pdf_preview(pdf), width="stretch")
