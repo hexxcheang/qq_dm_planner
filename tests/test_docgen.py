@@ -102,6 +102,7 @@ def test_generate_pdfs(tmp_path):
     assert docs.do_pdf.name == "DO261012-02_POR13495.pdf"
     invoice = _pdf_text(docs.invoice_pdf)
     assert "Description" in invoice and "Desription" not in invoice
+    assert "Carriers must also be notified" in invoice
     for text in ("Tax Invoice", "POR13495", "12-Oct-26", "IN261012-02", "DO261012-02",
                  "73620230 (ML5010C)", "170", "450.5", "$620.50"):
         assert text in invoice, text

@@ -12,12 +12,15 @@ from pathlib import Path
 from openpyxl import Workbook, load_workbook
 
 from .pdf_render import read_image_crops, render_sheet
-from .xlsx_utils import find_label, layout_item_block
+from .xlsx_utils import find_label, layout_item_block, replace_text
 
 # Cell positions in the quotation template.
 ATTENTION_ROWS = ("A", 8)  # company, address line 1, address line 2, person, email
 Q_DATE, Q_NO, Q_VALID = "H9", "H10", "H11"
 ITEMS_FIRST, ITEMS_LAST = 15, 18  # ITEMS_LAST carries the box's bottom border
+
+# Typos in the original quotation template, corrected even in copies uploaded before the fix.
+TEXT_FIXES = {"Shipping Term: Ex-work Singapore": "Shipping Term: Ex-Works Singapore"}
 
 
 @dataclass
@@ -79,6 +82,7 @@ def build_quotation(q: Quotation, template: Path) -> Workbook:
     """The quotation template filled in for ``q`` (in memory)."""
     wb = load_workbook(template)
     ws = wb.active
+    replace_text(ws, TEXT_FIXES)
 
     col, row = ATTENTION_ROWS
     c = q.customer

@@ -81,7 +81,9 @@ def po_template(tmp_path):
                                               bottom=thin if row == 19 else None)
     ws["A16"], ws["B16"], ws["D16"], ws["E16"], ws["G16"] = 1, "ML5010C", 1, "Pcs", 52.49
     ws["H16"] = "=D16*G16"
-    ws["A19"] = "REMARK :\nSHIPPING ADDRESS :\nJM VISTEC SYSTEM PTE LTD"
+    ws["A19"] = ("REMARK :\n1) PLEASE CONSOLE SHIPMENT WITH OTHER. NO PARTIAL SHIPMENT IS "
+                 "ALLOWED. SHIP VIA THIRDPARTY FEDEX.\nSHIPPING ADDRESS :\nJM VISTEC SYSTEM PTE LTD")
+    ws["A21"] = "IMPORTANT: PLEASE ADVICE THE DELIVERY STATUS."
     ws.merge_cells("A19:C19")
     ws["G20"], ws["H20"] = "Total (USD)", "=SUM(H16:H19)"
     path = tmp_path / "po_template.xlsx"
@@ -161,3 +163,12 @@ def test_generate_supplier_po_pdf(tmp_path, po_template):
                      "104.98", "290.20", "395.18", "湖南省长沙市雨花区"):
         assert expected in text, expected
     assert load_workbook(po_template).active["G6"].value == "PO261009-01"  # template untouched
+
+
+def test_po_template_typos_corrected(po_template):
+    po = SupplierPO(date(2026, 10, 25), 1, [POLine("ML5010C", 1, 52.49)])
+    ws = build_supplier_po(po, po_template).active
+    texts = " ".join(c.value for r in ws.iter_rows() for c in r if isinstance(c.value, str))
+    assert "PLEASE ADVISE THE DELIVERY STATUS" in texts and "ADVICE" not in texts
+    assert "PLEASE CONSOLIDATE SHIPMENT WITH OTHERS." in texts and "CONSOLE " not in texts
+    assert "SHIP VIA THIRD-PARTY FEDEX" in texts

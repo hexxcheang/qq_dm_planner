@@ -124,3 +124,16 @@ def layout_item_block(
         used += MIN_FILLER_HEIGHT
     ws.row_dimensions[last].height = max(MIN_FILLER_HEIGHT, template_height - used)
     return item_rows
+
+
+def replace_text(ws: Worksheet, replacements: dict[str, str]) -> None:
+    """Correct wording in the worksheet's text cells (e.g. typos in an uploaded template)."""
+    for row in ws.iter_rows():
+        for cell in row:
+            value = cell.value
+            if not isinstance(value, str) or value.startswith("="):
+                continue
+            for old, new in replacements.items():
+                value = value.replace(old, new)
+            if value != cell.value:
+                cell.value = value

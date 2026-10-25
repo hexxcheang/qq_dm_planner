@@ -72,7 +72,7 @@ def quotation_template(tmp_path):
                                               bottom=thin if row == 18 else None)
     ws["G19"], ws["H19"] = "Total (SGD)", "=SUM(H15:H18)"
     ws["H19"].number_format = '"$"#,##0.00_);[Red]\\("$"#,##0.00\\)'
-    ws["A22"] = "Delivery Terms: within 2-3 weeks"
+    ws["A22"] = "Delivery Terms: within 2-3 weeks\nShipping Term: Ex-work Singapore"
     ws.merge_cells("A22:G23")
     path = tmp_path / "quotation_template.xlsx"
     wb.save(path)
@@ -159,6 +159,7 @@ def test_generate_quotation_pdf(tmp_path, quotation_template):
                      "72.31", "144.62", "307.70", "$1,146.16"):
         assert expected in text, expected
     assert "Atrobot" not in text
+    assert "Ex-Works Singapore" in text and "Ex-work " not in text
 
 
 def test_classify_quotation_template(quotation_template):

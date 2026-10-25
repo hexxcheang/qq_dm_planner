@@ -10,13 +10,20 @@ from pathlib import Path
 from openpyxl import Workbook, load_workbook
 
 from .pdf_render import read_image_crops, render_sheet
-from .xlsx_utils import find_label, layout_item_block
+from .xlsx_utils import find_label, layout_item_block, replace_text
 
 DELIVERY_DAYS = 10
 
 # Cell positions in the PO template.
 PO_NO, PO_DATE, PO_DELIVERY = "G6", "G7", "G8"
 ITEMS_FIRST, ITEMS_LAST = 16, 18  # the remarks row below them closes the item box
+
+# Typos in the original PO template, corrected even in copies uploaded before the fix.
+TEXT_FIXES = {
+    "PLEASE ADVICE THE DELIVERY STATUS": "PLEASE ADVISE THE DELIVERY STATUS",
+    "PLEASE CONSOLE SHIPMENT WITH OTHER.": "PLEASE CONSOLIDATE SHIPMENT WITH OTHERS.",
+    "SHIP VIA THIRDPARTY": "SHIP VIA THIRD-PARTY",
+}
 
 
 @dataclass
@@ -62,6 +69,7 @@ def build_supplier_po(po: SupplierPO, template: Path) -> Workbook:
     """The PO template filled in for ``po`` (in memory)."""
     wb = load_workbook(template)
     ws = wb.active
+    replace_text(ws, TEXT_FIXES)
 
     ws[PO_NO] = po.po_no
     ws[PO_DATE] = datetime.combine(po.po_date, datetime.min.time())
