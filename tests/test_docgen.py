@@ -184,3 +184,34 @@ def test_items_from_rows_multiline_and_table_end():
     items = items_from_rows(rows)
     assert [(i.description, i.qty, i.units, i.unit_price) for i in items] == [
         ("73620230 (ML5010C)", 2, "Pcs", 85.0)]
+
+
+@pytest.mark.parametrize("n_items", [1, 18, 19, 26, 27, 34, 50, 120])
+def test_long_orders_continue_on_next_pages(tmp_path, n_items):
+    po = PurchaseOrder("POR13557", [LineItem(f"8023{i:04d} (MV{i:04d}A)", 3, "Pcs", 10 + i)
+                                    for i in range(1, n_items + 1)])
+    docs = generate_documents(po, date(2026, 10, 2), 1, tmp_path)
+    # Up to 18 items fit on one invoice page and 26 on one DO page, with the totals/terms.
+    for path, label, ending, one_page in (
+            (docs.invoice_pdf, "Tax Invoice IN261002-01", "Amount Due", 18),
+            (docs.do_pdf, "Delivery Order DO261002-01", "RECEIVED", 26)):
+        with pdfplumber.open(path) as pdf:
+            texts = [page.extract_text() for page in pdf.pages]
+            item_words = [w for page in pdf.pages
+                          for w in page.extract_words(extra_attrs=["size"])
+                          if w["text"].startswith("(MV")]
+        count = len(texts)
+        # Every item exactly once, in order, at full size (11 pt) on every page.
+        assert [w["text"] for w in item_words] == [f"(MV{i:04d}A)" for i in range(1, n_items + 1)]
+        assert {round(w["size"]) for w in item_words} == {11}
+        assert ending in texts[-1] and all(ending not in t for t in texts[:-1])
+        if n_items <= one_page:
+            assert count == 1 and "Page 1 of" not in texts[0]
+            continue
+        assert count >= 2
+        for k, text in enumerate(texts, start=1):
+            assert f"Page {k} of {count}" in text
+            if k > 1:
+                assert f"{label} (continued)" in text
+                assert "S/N" in text and "Description" in text  # headings repeated
+        assert "(MV" in texts[-1]  # the totals page also carries at least one item

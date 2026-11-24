@@ -16,6 +16,7 @@ import io
 import math
 import re
 import zipfile
+from dataclasses import dataclass
 from xml.etree import ElementTree
 from datetime import date, datetime
 from pathlib import Path
@@ -123,6 +124,10 @@ def _used_range(ws: Worksheet) -> tuple[int, int]:
                 last_col = max(last_col, cell.column)
     for rng in ws.merged_cells.ranges:
         last_row, last_col = max(last_row, rng.max_row), max(last_col, rng.max_col)
+    for img in getattr(ws, "_images", []):  # e.g. a stamp placed below the last text
+        start = getattr(img.anchor, "_from", None)
+        if start is not None:
+            last_row = max(last_row, start.row + 1)
     return last_row, last_col
 
 
@@ -238,21 +243,42 @@ def _wrap(text: str, font: str, size: float, width: float) -> list[str]:
 
 
 class _Layout:
-    def __init__(self, ws: Worksheet, last_row: int, last_col: int):
+    """Positions of columns, and of the given rows stacked in the given order."""
+
+    def __init__(self, ws: Worksheet, rows: list[int], last_col: int):
         self.col_x = [0.0]
         for c in range(1, last_col + 2):
             self.col_x.append(self.col_x[-1] + col_width_pt(ws, c))
-        self.row_y = [0.0]
-        for r in range(1, last_row + 2):
-            self.row_y.append(self.row_y[-1] + row_height_pt(ws, r))
+        self.rows = rows
+        self.top: dict[int, float] = {}
+        self.bottom: dict[int, float] = {}
+        y = 0.0
+        for r in rows:
+            self.top[r] = y
+            y += row_height_pt(ws, r)
+            self.bottom[r] = y
         self.width = self.col_x[last_col]
-        self.height = self.row_y[last_row]
+        self.height = y
 
     def x(self, col: int) -> float:  # left edge of 1-based column
         return self.col_x[col - 1]
 
-    def y(self, row: int) -> float:  # top edge of 1-based row, measured downwards
-        return self.row_y[row - 1]
+    def y(self, row: int) -> float:  # top edge of a row on this page, measured downwards
+        return self.top[row]
+
+
+@dataclass
+class TableRows:
+    """Where a sheet's item table is, so long tables can continue on further pages.
+
+    ``header`` is the column-heading row, repeated at the top of every
+    continuation page. Item rows ``first_item``..``last_item`` may be split
+    across pages; the rows after them (end of the box, totals, terms, ...)
+    stay together after the last item.
+    """
+    header: int
+    first_item: int
+    last_item: int
 
 
 def read_image_crops(xlsx_path: Path) -> list[tuple[float, float, float, float] | None]:
@@ -279,24 +305,83 @@ def read_image_crops(xlsx_path: Path) -> list[tuple[float, float, float, float] 
 
 
 def render_sheet(ws: Worksheet,
-                 image_crops: list[tuple[float, float, float, float] | None] | None = None) -> bytes:
-    """Render one worksheet as a one-page A4 PDF and return the PDF bytes."""
+                 image_crops: list[tuple[float, float, float, float] | None] | None = None,
+                 table: TableRows | None = None, continued_label: str = "") -> bytes:
+    """Render one worksheet as an A4 PDF and return the PDF bytes.
+
+    Without ``table`` the sheet is shrunk to fit one page. With ``table`` it is
+    drawn at full size and a long item table continues on the next page(s),
+    with its column headings repeated and "Page n of N" at the bottom; each
+    continuation page is headed "<continued_label> (continued)" so a loose page
+    can be matched to its document.
+    """
     _register_fonts()
     last_row, last_col = _used_range(ws)
-    layout = _Layout(ws, last_row, last_col)
+    whole = _Layout(ws, list(range(1, last_row + 1)), last_col)
 
     page_w, page_h = A4
     margins = ws.page_margins
     left, right = margins.left * 72, margins.right * 72
     top, bottom = margins.top * 72, margins.bottom * 72
-    scale = min(1.0, (page_w - left - right) / layout.width, (page_h - top - bottom) / layout.height)
+    scale = min(1.0, (page_w - left - right) / whole.width)
+    room = (page_h - top - bottom) / scale
+    if table is None:
+        scale = min(scale, (page_h - top - bottom) / whole.height)
+        pages = [whole.rows]
+    else:
+        pages = _paginate(ws, whole.rows, table, room)
 
     buf = io.BytesIO()
     pdf = canvas.Canvas(buf, pagesize=A4)
-    pdf.translate(left, page_h - top)
-    pdf.scale(scale, scale)
-    # From here on: x to the right, y = -distance from the top of the sheet.
+    for number, rows in enumerate(pages, start=1):
+        pdf.saveState()
+        pdf.translate(left, page_h - top)
+        pdf.scale(scale, scale)
+        # From here on: x to the right, y = -distance from the top of the page's content.
+        layout = _Layout(ws, rows, last_col)
+        _draw_page(pdf, ws, layout, whole, last_col, image_crops or [])
+        if table is not None:
+            _close_table_on_page(pdf, ws, layout, table, number, len(pages))
+        pdf.restoreState()
+        if len(pages) > 1:
+            pdf.setFont(REGULAR, 9)
+            pdf.drawRightString(page_w - right, bottom / 2, f"Page {number} of {len(pages)}")
+            if number > 1 and continued_label:
+                pdf.drawRightString(page_w - right, page_h - top / 2,
+                                    f"{continued_label} (continued)")
+        pdf.showPage()
+    pdf.save()
+    return buf.getvalue()
 
+
+def _paginate(ws: Worksheet, rows: list[int], table: TableRows, room: float) -> list[list[int]]:
+    """Split rows into pages of at most ``room`` points, breaking only between items."""
+    height = {r: row_height_pt(ws, r) for r in rows}
+    items = [r for r in rows if table.first_item <= r <= table.last_item]
+    before = [r for r in rows if r < table.first_item]
+    after = [r for r in rows if r > table.last_item]
+
+    pages: list[list[int]] = []
+    page, used = list(before), sum(height[r] for r in before)
+    for r in items:
+        if used + height[r] > room and any(table.first_item <= p <= table.last_item for p in page):
+            pages.append(page)
+            page, used = [table.header], height[table.header]
+        page.append(r)
+        used += height[r]
+    if after and used + sum(height[r] for r in after) > room and items:
+        # Totals and terms don't fit under the last item: move the last item over
+        # with them, so the final page is not totals alone.
+        moved = page.pop()
+        pages.append(page)
+        page = [table.header, moved]
+    pages.append(page + after)
+    return pages
+
+
+def _draw_page(pdf: canvas.Canvas, ws: Worksheet, layout: _Layout, whole: _Layout,
+               last_col: int, crops: list) -> None:
+    on_page = set(layout.rows)
     merged_anchor = {}
     merged_inner = set()
     for rng in ws.merged_cells.ranges:
@@ -306,10 +391,10 @@ def render_sheet(ws: Worksheet,
                 if (r, c) != (rng.min_row, rng.min_col):
                     merged_inner.add((r, c))
 
-    _draw_images(pdf, ws, layout, image_crops or [])
-    _draw_borders(pdf, ws, layout, last_row, last_col)
-    for row in ws.iter_rows(min_row=1, max_row=last_row, max_col=last_col):
-        for cell in row:
+    _draw_images(pdf, ws, layout, whole, crops)
+    _draw_borders(pdf, ws, layout, last_col)
+    for r in layout.rows:
+        for cell in ws[r][:last_col]:
             if (cell.row, cell.column) in merged_inner:
                 continue
             value = cell_value(ws, cell)
@@ -317,16 +402,38 @@ def render_sheet(ws: Worksheet,
                 continue
             rng = merged_anchor.get((cell.row, cell.column))
             max_row, max_col = (rng.max_row, rng.max_col) if rng else (cell.row, cell.column)
+            if max_row not in on_page:
+                max_row = cell.row
             box = (layout.x(cell.column), layout.y(cell.row),
-                   layout.x(max_col + 1), layout.y(max_row + 1))
+                   layout.x(max_col + 1), layout.bottom[max_row])
             right_edge = ws.cell(cell.row, max_col).border.right
             next_left = ws.cell(cell.row, max_col + 1).border.left
             bordered = bool((right_edge and right_edge.style) or (next_left and next_left.style))
             _draw_text(pdf, cell, value, box, bordered)
 
-    pdf.showPage()
-    pdf.save()
-    return buf.getvalue()
+
+def _table_columns(ws: Worksheet, table: TableRows) -> tuple[int, int]:
+    """First and last column of the item table, from the bordered heading cells."""
+    cols = [c.column for c in ws[table.header]
+            if any(getattr(c.border, side) is not None and getattr(c.border, side).style
+                   for side in ("left", "right", "top", "bottom"))]
+    return (min(cols), max(cols)) if cols else (1, ws.max_column)
+
+
+def _close_table_on_page(pdf: canvas.Canvas, ws: Worksheet, layout: _Layout, table: TableRows,
+                         number: int, count: int) -> None:
+    """Rule under a repeated heading row, and under the last item before a page break."""
+    first_col, last_col = _table_columns(ws, table)
+    x0, x1 = layout.x(first_col), layout.x(last_col + 1)
+    pdf.setStrokeColorRGB(0, 0, 0)
+    pdf.setLineWidth(BORDER_WIDTHS["thin"])
+    if number > 1 and table.header in layout.top:
+        y = layout.bottom[table.header]
+        pdf.line(x0, -y, x1, -y)
+    last = layout.rows[-1]
+    if number < count and table.first_item <= last <= table.last_item:
+        y = layout.bottom[last]
+        pdf.line(x0, -y, x1, -y)
 
 
 def _draw_text(pdf: canvas.Canvas, cell, value, box, bordered: bool = False) -> None:
@@ -376,8 +483,7 @@ def _draw_text(pdf: canvas.Canvas, cell, value, box, bordered: bool = False) -> 
     pdf.setStrokeColorRGB(0, 0, 0)
 
 
-def _draw_borders(pdf: canvas.Canvas, ws: Worksheet, layout: _Layout, last_row: int,
-                  last_col: int) -> None:
+def _draw_borders(pdf: canvas.Canvas, ws: Worksheet, layout: _Layout, last_col: int) -> None:
     # Inside a merged range only its outer edges are drawn, as in Excel.
     merged_of = {}
     for rng in ws.merged_cells.ranges:
@@ -385,8 +491,8 @@ def _draw_borders(pdf: canvas.Canvas, ws: Worksheet, layout: _Layout, last_row: 
             for c in range(rng.min_col, rng.max_col + 1):
                 merged_of[(r, c)] = rng
     pdf.setStrokeColorRGB(0, 0, 0)
-    for row in ws.iter_rows(min_row=1, max_row=last_row, max_col=last_col):
-        for cell in row:
+    for r in layout.rows:
+        for cell in ws[r][:last_col]:
             b = cell.border
             rng = merged_of.get((cell.row, cell.column))
             inner = set()
@@ -400,7 +506,7 @@ def _draw_borders(pdf: canvas.Canvas, ws: Worksheet, layout: _Layout, last_row: 
                 if cell.row < rng.max_row:
                     inner.add("bottom")
             x0, y0 = layout.x(cell.column), layout.y(cell.row)
-            x1, y1 = layout.x(cell.column + 1), layout.y(cell.row + 1)
+            x1, y1 = layout.x(cell.column + 1), layout.bottom[cell.row]
             for side, (ax, ay, bx, by) in (("left", (x0, y0, x0, y1)), ("right", (x1, y0, x1, y1)),
                                            ("top", (x0, y0, x1, y0)), ("bottom", (x0, y1, x1, y1))):
                 style = getattr(b, side).style if getattr(b, side) is not None else None
@@ -412,24 +518,29 @@ def _draw_borders(pdf: canvas.Canvas, ws: Worksheet, layout: _Layout, last_row: 
     pdf.setDash()
 
 
-def _draw_images(pdf: canvas.Canvas, ws: Worksheet, layout: _Layout,
+def _draw_images(pdf: canvas.Canvas, ws: Worksheet, layout: _Layout, whole: _Layout,
                  crops: list[tuple[float, float, float, float] | None]) -> None:
+    """Draw the pictures anchored on this page's rows, at their size on the whole sheet."""
     from PIL import Image
 
     for index, img in enumerate(getattr(ws, "_images", [])):
         anchor = img.anchor
         start = getattr(anchor, "_from", None)
-        if start is None:
+        if start is None or start.row + 1 not in layout.top:
             continue
-        x0 = layout.x(start.col + 1) + start.colOff / EMU_PER_PT
-        y0 = layout.y(start.row + 1) + start.rowOff / EMU_PER_PT
+        x0 = whole.x(start.col + 1) + start.colOff / EMU_PER_PT
+        y0 = whole.y(start.row + 1) + start.rowOff / EMU_PER_PT
         end = getattr(anchor, "to", None)
         if end is not None:
-            x1 = layout.x(end.col + 1) + end.colOff / EMU_PER_PT
-            y1 = layout.y(end.row + 1) + end.rowOff / EMU_PER_PT
+            x1 = whole.x(end.col + 1) + end.colOff / EMU_PER_PT
+            end_row = end.row + 1
+            end_top = whole.top.get(end_row, whole.height)
+            y1 = end_top + end.rowOff / EMU_PER_PT
         else:
             ext = anchor.ext
             x1, y1 = x0 + ext.width / EMU_PER_PT, y0 + ext.height / EMU_PER_PT
+        shift = layout.y(start.row + 1) - whole.y(start.row + 1)  # where the row is on this page
+        y0, y1 = y0 + shift, y1 + shift
         picture = Image.open(io.BytesIO(img._data()))
         crop = crops[index] if index < len(crops) else None
         if crop:

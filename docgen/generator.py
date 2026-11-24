@@ -11,7 +11,7 @@ from openpyxl import Workbook, load_workbook
 
 from .models import Customer, PurchaseOrder
 from .numbering import do_no, invoice_no
-from .pdf_render import read_image_crops, render_sheet
+from .pdf_render import TableRows, read_image_crops, render_sheet
 from .xlsx_utils import find_label, layout_item_block
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -38,13 +38,6 @@ class GeneratedDocs:
 
 def _number(value: float) -> float | int:
     return int(value) if float(value).is_integer() else value
-
-
-def _fit_one_page(ws) -> None:
-    # Long POs push the footer past the page edge; shrink to one page instead.
-    ws.sheet_properties.pageSetUpPr.fitToPage = True
-    ws.page_setup.fitToWidth = 1
-    ws.page_setup.fitToHeight = 1
 
 
 def _write_customer(ws, anchor: tuple[str, int], customer: Customer) -> None:
@@ -83,7 +76,6 @@ def build_invoice(po: PurchaseOrder, doc_date: date, seq: int,
     last_item = rows[-1] if rows else INV_ITEMS_FIRST
     ws[f"H{total_row}"] = f"=SUM(H{INV_ITEMS_FIRST}:H{last_item})"
     ws[f"H{due_row}"] = f"=H{total_row}"
-    _fit_one_page(ws)
     return wb
 
 
@@ -108,7 +100,6 @@ def build_delivery_order(po: PurchaseOrder, doc_date: date, seq: int,
         ws[f"C{row}"] = item.units
         ws[f"D{row}"] = item.description
         ws[f"F{row}"] = "N/A"
-    _fit_one_page(ws)
     return wb
 
 
@@ -124,8 +115,14 @@ def generate_documents(po: PurchaseOrder, doc_date: date, seq: int, out_dir: Pat
     out_dir.mkdir(parents=True, exist_ok=True)
     inv_pdf = out_dir / f"{inv_no}_{po_part}.pdf"
     do_pdf = out_dir / f"{d_no}_{po_part}.pdf"
-    inv_pdf.write_bytes(render_sheet(build_invoice(po, doc_date, seq).active,
-                                     read_image_crops(INVOICE_TEMPLATE)))
-    do_pdf.write_bytes(render_sheet(build_delivery_order(po, doc_date, seq).active,
-                                    read_image_crops(DO_TEMPLATE)))
+    # Long item lists continue on further pages (headings repeated) instead of shrinking.
+    n = max(len(po.items), 1)
+    inv_pdf.write_bytes(render_sheet(
+        build_invoice(po, doc_date, seq).active, read_image_crops(INVOICE_TEMPLATE),
+        TableRows(INV_ITEMS_FIRST - 1, INV_ITEMS_FIRST, INV_ITEMS_FIRST + n - 1),
+        continued_label=f"Tax Invoice {inv_no}"))
+    do_pdf.write_bytes(render_sheet(
+        build_delivery_order(po, doc_date, seq).active, read_image_crops(DO_TEMPLATE),
+        TableRows(DO_ITEMS_FIRST - 1, DO_ITEMS_FIRST, DO_ITEMS_FIRST + n - 1),
+        continued_label=f"Delivery Order {d_no}"))
     return GeneratedDocs(inv_no, d_no, inv_pdf, do_pdf)

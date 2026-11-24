@@ -26,8 +26,12 @@ Everything else (company header, payment terms, salesman, terms & conditions,
 Bill To / Ship To) is kept from the template. Bill To / Ship To can be changed
 in the app for a different customer.
 
-The item table grows when a PO has more lines than the template has room for,
-and the page is set to print on one page.
+The item table grows when a PO has more lines than the template has room for.
+When the items don't fit on one page (about 18 on an invoice, 26 on a DO),
+the table continues on the next page at full size: the column headings are
+repeated, each page is numbered "Page n of N", continuation pages are headed
+"Tax Invoice IN… (continued)" / "Delivery Order DO… (continued)", and the
+totals and terms follow the last item.
 
 ## Quotation (customer)
 
