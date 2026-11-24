@@ -3,7 +3,7 @@
 Makes DM Optical's business documents as PDFs, laid out from the company
 templates:
 
-- **Quotation** for a customer, priced from the DMO price list
+- **Quotation** for a customer, priced from the DMO price masterlist
 - **Tax Invoice** and **Delivery Order** from a customer's Purchase Order
 - **Purchase Order** to the supplier (Hunan Chiopt), priced from the price lists
 
@@ -36,9 +36,11 @@ In the **Quotation** tab:
 1. Enter the customer's company name, address, person in charge and email
    (or pick a customer you quoted before).
 2. Type each item's **DM product code** (e.g. `28160140`) or **Chiopt model
-   no.** (e.g. `FA0401C`) and the quantity. The app finds the item in the DMO
-   price list and prices it at **JM Buying Price (SGD) ÷ 0.65**, rounded to
-   cents.
+   no.** (e.g. `FA0401C`) and the quantity. The app finds the item in the
+   price masterlist (`DMO_Lens_Price_List_Masterlist_...xlsx`) and uses its
+   **Direct Customer Buying Price (SGD) - overseas customer bear freight cost
+   from SG**, rounded to cents. Items without that price (e.g. microscope
+   lenses, lens accessories) ask for a typed price.
 3. The description is the **product code** followed by the item's series
    heading from the price list, e.g. `28160140, 1/1.8" 5MP FA Series`. Items
    the list has no product code for (some accessories and special lenses)
@@ -46,8 +48,9 @@ In the **Quotation** tab:
 
 The quotation gets Quotation No. `Q[YYMMDD-NN]` for today, Valid Till exactly
 one month later (same day next month), the items and the Total (SGD). A
-typed unit price overrides the list. The quotation template is uploaded once
-in the app, like the PO template.
+typed unit price overrides the list. The quotation template and the price
+masterlist are uploaded once in the app, like the PO template; upload a newer
+masterlist or template any time and it is used from then on.
 
 **Signature & company stamp:** upload an image of them once (PNG or JPG; a
 white background is made transparent) in the quotation tab's upload box, and
@@ -71,7 +74,7 @@ type the price in the table. A typed price always overrides the list.
 The PO gets PO# `PO[YYMMDD-NN]` for the PO date (today unless changed), the
 delivery date 10 days later, the items and the Total (USD).
 
-The PO and quotation templates, the two price lists and the signature & stamp
+The PO and quotation templates, the price lists and the signature & stamp
 hold buying prices, contacts and signatures, so they are **not** in this
 repository. Upload them once in the app; upload one again whenever it changes,
 and the new one is used from then on.
@@ -151,7 +154,8 @@ python -m pytest
   LibreOffice needed; Calibri is drawn with the metric-compatible Carlito font,
   `docgen/fonts/`, SIL Open Font License)
 - `docgen/numbering.py` – document numbers and the register of used numbers
-- `docgen/pricing.py` – supplier price lookup (product code → model → USD price)
+- `docgen/pricing.py` – price lookup: supplier USD prices, and quotation prices
+  from the masterlist
 - `docgen/supplier_po.py` – fills the supplier PO template
 - `docgen/quotation.py` – fills the quotation template
 - `docgen/private_files.py` – the uploaded templates, price lists and signature

@@ -1,6 +1,6 @@
-"""Customer quotation: DMO price list lookup and quotation generation.
+"""Customer quotation: price masterlist lookup and quotation generation.
 
-Uses small made-up workbooks shaped like the real DMO price list and
+Uses small made-up workbooks shaped like the real price masterlist and
 quotation template (those stay out of the repo).
 """
 
@@ -13,14 +13,17 @@ from openpyxl.styles import Border, Font, Side
 from PIL import Image
 
 from docgen import paths
-from docgen.pricing import DmoCatalog, read_dmo_catalog, read_product_codes
-from docgen.private_files import QUOTATION_TEMPLATE, SIGNATURE, PrivateStore, classify
+from docgen.pricing import DIRECT_PRICE_HEADER, DmoCatalog, read_dmo_catalog, read_product_codes
+from docgen.private_files import (QUOTATION_TEMPLATE, QUOTE_PRICES, SIGNATURE, PrivateStore,
+                                  classify)
 from docgen.quotation import (CustomerBook, Quotation, QuoteCustomer, QuoteLine, add_one_month,
                               build_quotation, generate_quotation)
 
 
 @pytest.fixture
-def dmo_list(tmp_path):
+def masterlist(tmp_path):
+    """Shaped like "DMO_Lens_Price_List_Masterlist": several price columns per sheet."""
+    direct = "Direct Customer Buying Price (SGD) - overseas customer bear freight cost from SG"
     wb = Workbook()
     fa = wb.active
     fa.title = "FA"
@@ -28,21 +31,35 @@ def dmo_list(tmp_path):
     fa["A2"] = "Indicating obsolete models"
     fa["A4"] = "FA LENS"
     fa.append(["Product Code (DM Optical)", "Model No. (Chiopt)", "Specifications", None, None,
-               None, "JM Buying Price (SGD) ", "Remarks"])
+               None, "JM Buying Price (SGD) - JM bear freight cost",
+               "New JM Buying Price (SGD) - DM bear freight cost", "DM at 40% margin", direct,
+               "Remarks"])
     fa.append([None, None, "Focal length", "FNO", "Max Image Circle", "Resolution"])
     fa.append([' 1/1.8" 5MP FA Series'])
-    fa.append([28160140, "FA0401C", "4mm", "F2.2", '1/1.8"', "5Mega", 47])
-    fa.append(["28160140-1", "FA4501C", "4.5mm", "F2.2", '1/1.8"', "5Mega", 122])
+    fa.append([28160140, "FA0401C", "4mm", "F2.2", '1/1.8"', "5Mega", 47, 81.47, 62.67,
+               97.13939393939394])
+    fa.append(["28160140-1", "FA4501C", "4.5mm", "F2.2", '1/1.8"', "5Mega", 122, 156.47, 162.67,
+               197.13939393939395])
     fa.append(['1.1" Macro Series'])
-    fa.append([73620230, "ML5010C", "50mm", 2.8, '1.1"', "12M", 85])
+    fa.append([73620230, "ML5010C", "50mm", 2.8, '1.1"', "12M", 85, 119.47, 113.33,
+               147.8060606060606])
     fa.append([None, "ML5010M1", None, None, '1.1"', "12M"])  # no code, no price
+    micro = wb.create_sheet("Microscope Lens")  # no direct customer price column
+    micro["A1"] = "Industrial Microscope Lens"
+    micro.append(["Product Code (DM Optical)", "Model No. (Chiopt)", "JM Buying Price (SGD) ",
+                  "New JM Buying Price (SGD)", "Remarks"])
+    micro.append(["32220200-1", "CA10007A", 952, 996.07])
     acc = wb.create_sheet("Lens Accessories")
     acc["A1"] = "LENS ACCESSORIES"
     acc["A3"] = "Teleconverter"
     acc.append(["Model No. (Chiopt)", "Specifications", "JM Buying Price (SGD) ", "Remarks"])
     acc.append([None, "Length"])
     acc.append(["BA1501A", "1.5X", 40, "TELECONVERTER"])
-    path = tmp_path / "dmo.xlsx"
+    freight = wb.create_sheet("Freight Estimate")  # workings: must not add items
+    freight["A1"] = "Estimated freight per lens model"
+    freight.append(["Sheet", "Product Code (DM Optical)", "Model No. (Chiopt)", "Series"])
+    freight.append(["FA", 99999999, "ZZ9999Z", "Freight-only row"])
+    path = tmp_path / "masterlist.xlsx"
     wb.save(path)
     return path
 
@@ -83,38 +100,47 @@ def quotation_template(tmp_path):
     return path
 
 
-def test_catalog_reads_series_codes_and_prices(dmo_list):
-    items = read_dmo_catalog(dmo_list)
-    assert [(i.code, i.model, i.jm_price_sgd, i.series) for i in items] == [
-        ("28160140", "FA0401C", 47.0, '1/1.8" 5MP FA Series'),
-        ("28160140-1", "FA4501C", 122.0, '1/1.8" 5MP FA Series'),
-        ("73620230", "ML5010C", 85.0, '1.1" Macro Series'),
+def test_masterlist_catalog_reads_series_codes_and_direct_prices(masterlist):
+    items = read_dmo_catalog(masterlist, DIRECT_PRICE_HEADER)
+    rounded = [(i.code, i.model, i.price_sgd and round(i.price_sgd, 4), i.series) for i in items]
+    assert rounded == [
+        ("28160140", "FA0401C", 97.1394, '1/1.8" 5MP FA Series'),
+        ("28160140-1", "FA4501C", 197.1394, '1/1.8" 5MP FA Series'),
+        ("73620230", "ML5010C", 147.8061, '1.1" Macro Series'),
         (None, "ML5010M1", None, '1.1" Macro Series'),
-        (None, "BA1501A", 40.0, "Teleconverter"),
-    ]
-    assert read_product_codes(dmo_list) == {"28160140": "FA0401C", "28160140-1": "FA4501C",
-                                            "73620230": "ML5010C"}
+        ("32220200-1", "CA10007A", None, "Industrial Microscope Lens"),
+        (None, "BA1501A", None, "Teleconverter"),
+    ]  # the Freight Estimate sheet is skipped
+    assert [i.price_sgd for i in read_dmo_catalog(masterlist)][:3] == [47, 122, 85]  # JM column
+    assert read_product_codes(masterlist)["73620230"] == "ML5010C"
 
 
-def test_quote_price_and_description(dmo_list):
-    catalog = DmoCatalog.from_file(dmo_list)
+def test_quote_price_and_description(masterlist):
+    catalog = DmoCatalog.from_file(masterlist)
     by_code = catalog.resolve("28160140")
     assert by_code.description == '28160140, 1/1.8" 5MP FA Series'
-    assert by_code.unit_price == 72.31  # 47 / 0.65
+    assert by_code.unit_price == 97.14  # direct customer price, rounded to cents
     by_model = catalog.resolve("fa0401c")
     assert (by_model.description, by_model.unit_price, by_model.matched_by) == (
-        '28160140, 1/1.8" 5MP FA Series', 72.31, "Chiopt model no.")
-    assert catalog.resolve(73620230).unit_price == 130.77  # 85 / 0.65
+        '28160140, 1/1.8" 5MP FA Series', 97.14, "Chiopt model no.")
+    assert catalog.resolve(73620230).unit_price == 147.81
 
 
-def test_quote_without_code_or_price(dmo_list):
-    catalog = DmoCatalog.from_file(dmo_list)
+def test_quote_without_code_or_price(masterlist):
+    catalog = DmoCatalog.from_file(masterlist)
     accessory = catalog.resolve("BA1501A")
-    assert accessory.description == "BA1501A, Teleconverter" and accessory.unit_price == 61.54
-    assert "model no. used" in accessory.note
-    no_price = catalog.resolve("ML5010M1")
-    assert no_price.unit_price is None and "enter the price" in no_price.note
+    assert accessory.description == "BA1501A, Teleconverter" and accessory.unit_price is None
+    assert "model no. used" in accessory.note and "enter the price" in accessory.note
+    microscope = catalog.resolve("CA10007A")
+    assert microscope.description == "32220200-1, Industrial Microscope Lens"
+    assert microscope.unit_price is None
+    assert catalog.resolve("ML5010M1").unit_price is None
+    assert catalog.resolve("ZZ9999Z").item is None  # only on the Freight sheet
     assert catalog.resolve("XYZ").item is None
+
+
+def test_classify_masterlist(masterlist):
+    assert classify(masterlist) == QUOTE_PRICES
 
 
 def test_valid_till_is_one_month_later():

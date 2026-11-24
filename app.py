@@ -26,10 +26,10 @@ from docgen.generator import INVOICE_TEMPLATE, generate_documents
 from docgen.models import Customer, LineItem, PurchaseOrder
 from docgen.numbering import Register, do_no, invoice_no
 from docgen.po_parser import SUPPORTED_TYPES, ParseError, claude_available, parse_po
-from docgen.pricing import QUOTE_FACTOR, DmoCatalog, PriceBook, normalize
+from docgen.pricing import DmoCatalog, PriceBook, normalize
 from docgen.paths import HOME, OUTPUT, RECORDS, migrate_legacy
 from docgen.private_files import (CHIOPT_PRICES, DMO_PRICES, PO_TEMPLATE, QUOTATION_TEMPLATE,
-                                  SIGNATURE, Kind, PrivateStore)
+                                  QUOTE_PRICES, SIGNATURE, Kind, PrivateStore)
 from docgen.quotation import (CustomerBook, Quotation, QuoteCustomer, QuoteLine,
                               generate_quotation, quotation_no)
 from docgen.supplier_po import DELIVERY_DAYS, POLine, SupplierPO, generate_supplier_po, po_no
@@ -47,7 +47,7 @@ ITEM_COLUMNS = ["Description", "Qty", "Units", "Unit Price"]
 ORDER_COLUMNS = ["Code", "Qty", "Unit Price (USD)"]
 QUOTE_COLUMNS = ["Code", "Qty", "Unit Price (SGD)"]
 SUPPLIER_FILES = (PO_TEMPLATE, CHIOPT_PRICES, DMO_PRICES)
-QUOTATION_FILES = (QUOTATION_TEMPLATE, DMO_PRICES)
+QUOTATION_FILES = (QUOTATION_TEMPLATE, QUOTE_PRICES)
 
 
 @st.cache_data
@@ -356,9 +356,9 @@ def supplier_po_page() -> None:
 
 
 @st.cache_resource
-def load_catalog(dmo: str, _stamp: float) -> DmoCatalog:
+def load_catalog(masterlist: str, _stamp: float) -> DmoCatalog:
     # _stamp (file modification time) makes a newly uploaded list load again.
-    return DmoCatalog.from_file(Path(dmo))
+    return DmoCatalog.from_file(Path(masterlist))
 
 
 def customer_form() -> QuoteCustomer:
@@ -381,14 +381,15 @@ def customer_form() -> QuoteCustomer:
 
 
 def quotation_page() -> None:
-    st.caption(f"Prices: JM Buying Price (SGD) from the DMO price list ÷ {QUOTE_FACTOR}")
-    private_files_setup(QUOTATION_FILES, "Price list, quotation template & signature",
+    st.caption("Prices: Direct Customer Buying Price (SGD) – overseas customer bears freight "
+               "cost from SG – from the price masterlist")
+    private_files_setup(QUOTATION_FILES, "Price masterlist, quotation template & signature",
                         "private_upload_quote", optional=(SIGNATURE,))
     if STORE.missing(QUOTATION_FILES):
         st.info("Upload the files above to start making quotations.")
         return
-    dmo = STORE.path(DMO_PRICES)
-    catalog = load_catalog(str(dmo), dmo.stat().st_mtime)
+    masterlist = STORE.path(QUOTE_PRICES)
+    catalog = load_catalog(str(masterlist), masterlist.stat().st_mtime)
 
     st.subheader("1. Customer (Attention)")
     customer = customer_form()
@@ -429,17 +430,15 @@ def quotation_page() -> None:
             "Code": found.code,
             "Description (on quotation)": found.description,
             "Found by": found.matched_by or "–",
-            "JM Buying Price (SGD)": found.item.jm_price_sgd if found.item else None,
             "Unit Price (SGD)": None if price is None else round(price, 2),
-            "Price from": "typed" if typed else (f"list ÷ {QUOTE_FACTOR}" if price else "–"),
+            "Price from": "typed" if typed else ("masterlist" if price else "–"),
             "Amount (SGD)": None if price is None else round(qty * round(price, 2), 2),
             "Note": found.note,
         })
     if preview:
         money = st.column_config.NumberColumn(format="%.2f")
         st.dataframe(pd.DataFrame(preview), hide_index=True, width="stretch",
-                     column_config={"JM Buying Price (SGD)": money, "Unit Price (SGD)": money,
-                                    "Amount (SGD)": money})
+                     column_config={"Unit Price (SGD)": money, "Amount (SGD)": money})
         st.markdown(f"**Total (SGD):** {sum(line.amount for line in lines):,.2f}")
 
     st.subheader("3. Quotation details")

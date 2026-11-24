@@ -11,8 +11,9 @@ A code typed in the app can be either a DM product code or a Chiopt model
 number. Prices are read from the values Excel last calculated and saved,
 rounded to cents.
 
-Customer quotations use the DMO list alone: the "JM Buying Price (SGD)"
-divided by QUOTE_FACTOR, described by product code and series heading.
+Customer quotations use the DMO lens price masterlist: the "Direct Customer
+Buying Price (SGD) - overseas customer bear freight cost from SG" as it is,
+described by product code and series heading.
 """
 
 from __future__ import annotations
@@ -28,8 +29,7 @@ DM_PRICE_HEADER = re.compile(r"dm\s*buying\s*price\s*\(usd\)", re.I)
 PRODUCT_CODE_HEADER = re.compile(r"product\s*code\s*\(dm\s*optical\)", re.I)
 CHIOPT_MODEL_HEADER = re.compile(r"model\s*no\.?\s*\(chiopt\)", re.I)
 JM_PRICE_HEADER = re.compile(r"jm\s*buying\s*price\s*\(sgd\)", re.I)
-
-QUOTE_FACTOR = 0.65  # customer quotation price = JM buying price (SGD) / 0.65
+DIRECT_PRICE_HEADER = re.compile(r"direct\s*customer\s*buying\s*price\s*\(sgd\)", re.I)
 
 
 def normalize(code) -> str:
@@ -96,7 +96,7 @@ def read_chiopt_prices(path: Path) -> dict[str, ChioptPrice]:
 class DmoItem:
     code: str | None  # DM product code as shown in the list; None when it has none
     model: str  # Chiopt model no.
-    jm_price_sgd: float | None
+    price_sgd: float | None  # from the price column the list was read with
     series: str  # the series heading above the item, e.g. '1/1.8" 5MP FA Series'
     sheet: str
 
@@ -108,16 +108,20 @@ def _code_text(value) -> str | None:
     return text if text and text != "-" else None
 
 
-def read_dmo_catalog(path: Path) -> list[DmoItem]:
-    """Every item in the DMO lens price list, with its series heading.
+def read_dmo_catalog(path: Path, price_header: re.Pattern = JM_PRICE_HEADER) -> list[DmoItem]:
+    """Every item in a DMO lens price list, with its series heading and price.
 
     Each sheet has a header row naming "Model No. (Chiopt)" and usually
-    "Product Code (DM Optical)" and "JM Buying Price (SGD)". A row whose only
-    content is a text in column A is a series heading for the items below it.
+    "Product Code (DM Optical)" and the price column ``price_header`` matches.
+    A row whose only content is a text in column A is a series heading for the
+    items below it. The masterlist's "Freight ..." sheets are workings, not
+    products, and are skipped.
     """
     wb = load_workbook(path, data_only=True, read_only=True)
     items: list[DmoItem] = []
     for ws in wb.worksheets:
+        if ws.title.strip().lower().startswith("freight"):
+            continue
         code_col = model_col = price_col = None
         series = ""
         for row in ws.iter_rows(values_only=True):
@@ -130,7 +134,7 @@ def read_dmo_catalog(path: Path) -> list[DmoItem]:
                 model_col = next(i for i, t in enumerate(texts) if CHIOPT_MODEL_HEADER.search(t))
                 code_col = next((i for i, t in enumerate(texts) if PRODUCT_CODE_HEADER.search(t)),
                                 None)
-                price_col = next((i for i, t in enumerate(texts) if JM_PRICE_HEADER.search(t)),
+                price_col = next((i for i, t in enumerate(texts) if price_header.search(t)),
                                  None)
                 continue
             if model_col is None or model_col >= len(texts) or not texts[model_col]:
@@ -156,14 +160,14 @@ def read_product_codes(path: Path) -> dict[str, str]:
 class QuoteResolved:
     code: str  # as typed
     item: DmoItem | None
-    unit_price: float | None  # JM buying price / QUOTE_FACTOR, rounded to cents
+    unit_price: float | None  # direct customer price, rounded to cents
     description: str
     matched_by: str
     note: str = ""
 
 
 class DmoCatalog:
-    """Customer quotation prices: JM Buying Price (SGD) / QUOTE_FACTOR."""
+    """Customer quotation prices: the masterlist's Direct Customer Buying Price (SGD)."""
 
     def __init__(self, items: list[DmoItem]):
         self.by_code: dict[str, DmoItem] = {}
@@ -179,7 +183,7 @@ class DmoCatalog:
 
     @classmethod
     def from_file(cls, path: Path) -> "DmoCatalog":
-        return cls(read_dmo_catalog(path))
+        return cls(read_dmo_catalog(path, DIRECT_PRICE_HEADER))
 
     def resolve(self, code) -> QuoteResolved:
         key, shown = normalize(code), _text(code)
@@ -188,7 +192,7 @@ class DmoCatalog:
         elif key in self.by_model:
             item, matched_by = self.by_model[key], "Chiopt model no."
         else:
-            return QuoteResolved(shown, None, None, shown, "", "Not found in the DMO price list")
+            return QuoteResolved(shown, None, None, shown, "", "Not found in the price masterlist")
         notes = []
         if item.code:
             description = item.code
@@ -197,14 +201,14 @@ class DmoCatalog:
             notes.append("no DM product code in the list – model no. used")
         if item.series:
             description = f"{description}, {item.series}"
-        price = round(item.jm_price_sgd / QUOTE_FACTOR, 2) if item.jm_price_sgd else None
+        price = round(item.price_sgd, 2) if item.price_sgd else None
         if price is None:
-            notes.append("no JM buying price – enter the price")
+            notes.append("no Direct Customer Buying Price in the masterlist – enter the price")
         return QuoteResolved(shown, item, price, description, matched_by, "; ".join(notes))
 
 
 def _rank(item: DmoItem) -> int:
-    return (item.code is not None) + (item.jm_price_sgd is not None)
+    return (item.code is not None) + (item.price_sgd is not None)
 
 
 def looks_like_chiopt_list(path: Path) -> bool:

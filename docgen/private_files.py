@@ -17,7 +17,7 @@ from datetime import datetime
 from pathlib import Path
 
 from .paths import SAVED_FILES
-from .pricing import DM_PRICE_HEADER, PRODUCT_CODE_HEADER, workbook_mentions
+from .pricing import DIRECT_PRICE_HEADER, DM_PRICE_HEADER, PRODUCT_CODE_HEADER, workbook_mentions
 
 PRIVATE_DIR = SAVED_FILES
 
@@ -40,9 +40,11 @@ DMO_PRICES = Kind("dmo_prices", "dmo_prices.xlsx", "DMO price list (product code
                   "DMO Lens Price List_JM Buying Price v5.xlsx")
 QUOTATION_TEMPLATE = Kind("quotation_template", "quotation_template.xlsx", "Quotation template",
                           "DMO_Quotation_Template.xlsx")
+QUOTE_PRICES = Kind("quote_prices", "quote_prices.xlsx", "Price masterlist (quotation prices)",
+                    "DMO_Lens_Price_List_Masterlist_24 Nov 2026.xlsx")
 SIGNATURE = Kind("signature_stamp", "signature_stamp.png", "Signature & company stamp (optional)",
                  "a PNG or JPG of the signature and stamp")
-KINDS = (PO_TEMPLATE, QUOTATION_TEMPLATE, CHIOPT_PRICES, DMO_PRICES, SIGNATURE)
+KINDS = (PO_TEMPLATE, QUOTATION_TEMPLATE, CHIOPT_PRICES, DMO_PRICES, QUOTE_PRICES, SIGNATURE)
 
 
 def classify(path: Path) -> Kind | None:
@@ -51,6 +53,8 @@ def classify(path: Path) -> Kind | None:
         return SIGNATURE
     if workbook_mentions(path, DM_PRICE_HEADER):
         return CHIOPT_PRICES
+    if workbook_mentions(path, DIRECT_PRICE_HEADER):  # the masterlist also has product codes
+        return QUOTE_PRICES
     if workbook_mentions(path, PRODUCT_CODE_HEADER):
         return DMO_PRICES
     if workbook_mentions(path, QUOTATION_TEMPLATE_MARK, max_rows=60):
