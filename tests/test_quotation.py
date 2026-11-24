@@ -267,3 +267,38 @@ def test_files_from_earlier_app_folder_are_carried_over(tmp_path, monkeypatch):
     copied = paths.migrate_legacy(old_app)
     assert copied == [new_home / "Saved files" / "quotation_template.xlsx"]
     assert (new_home / "Records" / "register.json").read_text() == '{"newer": 1}'  # kept
+
+
+def test_list_price_fills_in_and_stays_editable(masterlist):
+    import pandas as pd
+
+    from docgen.quotation import fill_list_prices
+
+    catalog = DmoCatalog.from_file(masterlist)
+    nan = float("nan")
+    filled: dict = {}
+    rows = pd.DataFrame({"Code": ["28160140", "ML5010C", "CA10007A", ""],
+                         "Qty": [1.0, 2.0, 1.0, 1.0],
+                         "Unit Price (SGD)": [nan, 120.0, nan, nan]})
+    out, changed = fill_list_prices(rows, catalog, filled)
+    assert changed
+    prices = list(out["Unit Price (SGD)"])
+    assert prices[0] == 97.14  # list price filled in
+    assert prices[1] == 120.0  # a typed (discounted) price is kept
+    assert pd.isna(prices[2]) and pd.isna(prices[3])  # no list price / no code
+
+    # Nothing left to fill: no change, so the app doesn't refresh the table again.
+    assert fill_list_prices(out, catalog, filled)[1] is False
+
+    # Changing the code of an auto-filled row brings the new item's list price...
+    out.loc[0, "Code"] = "73620230"
+    out2, changed = fill_list_prices(out, catalog, filled)
+    assert changed and out2.loc[0, "Unit Price (SGD)"] == 147.81
+    # ...but a price typed over it stays when the code changes.
+    out2.loc[0, "Unit Price (SGD)"] = 140.0
+    out2.loc[0, "Code"] = "28160140"
+    out3, changed = fill_list_prices(out2, catalog, filled)
+    assert not changed and out3.loc[0, "Unit Price (SGD)"] == 140.0
+    # Clearing a price brings the list price back.
+    out3.loc[0, "Unit Price (SGD)"] = nan
+    assert fill_list_prices(out3, catalog, filled)[0].loc[0, "Unit Price (SGD)"] == 97.14

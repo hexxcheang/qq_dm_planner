@@ -31,7 +31,7 @@ from docgen.paths import HOME, OUTPUT, RECORDS, migrate_legacy
 from docgen.private_files import (CHIOPT_PRICES, DMO_PRICES, PO_TEMPLATE, QUOTATION_TEMPLATE,
                                   QUOTE_PRICES, SIGNATURE, Kind, PrivateStore)
 from docgen.quotation import (CustomerBook, Quotation, QuoteCustomer, QuoteLine,
-                              generate_quotation, quotation_no)
+                              fill_list_prices, generate_quotation, quotation_no)
 from docgen.supplier_po import DELIVERY_DAYS, POLine, SupplierPO, generate_supplier_po, po_no
 
 ROOT = Path(__file__).resolve().parent
@@ -396,49 +396,69 @@ def quotation_page() -> None:
 
     st.subheader("2. Items")
     st.caption("Type a **DM product code** (e.g. 28160140) or a **Chiopt model no.** "
-               "(e.g. FA0401C) and the quantity. The quotation shows the product code and its "
-               "series. Leave Unit Price empty to use the price list; type a price to override it.")
+               "(e.g. FA0401C) and the quantity. The masterlist price fills in by itself; type "
+               "a different Unit Price to give a discount. Clear a price to get the list price "
+               "back. The quotation shows the product code and its series.")
+    ss = st.session_state
+    if "q_rows" not in ss:
+        ss.q_rows = pd.DataFrame({"Code": [""], "Qty": [1.0], "Unit Price (SGD)": [float("nan")]},
+                                 columns=QUOTE_COLUMNS)
+        ss.q_rows_version, ss.q_filled = 0, {}
     edited = st.data_editor(
-        pd.DataFrame({"Code": [""], "Qty": [1.0], "Unit Price (SGD)": [float("nan")]},
-                     columns=QUOTE_COLUMNS),
-        key="q_items", num_rows="dynamic", width="stretch",
+        ss.q_rows, key=f"q_items_{ss.q_rows_version}", num_rows="dynamic", width="stretch",
         column_config={
             "Code": st.column_config.TextColumn("Product code / Model no.", width="medium"),
             "Qty": st.column_config.NumberColumn(min_value=0, step=1, default=1),
             "Unit Price (SGD)": st.column_config.NumberColumn(
-                "Unit Price (SGD) – optional", min_value=0, format="%.2f"),
+                "Unit Price (SGD)", min_value=0, format="%.2f",
+                help="Filled in from the masterlist. Type another price to give a discount."),
         },
     )
+    with_prices, changed = fill_list_prices(edited, catalog, ss.q_filled)
+    if changed:  # show the filled-in prices in the table itself
+        ss.q_rows, ss.q_rows_version = with_prices, ss.q_rows_version + 1
+        st.rerun()
 
     lines: list[QuoteLine] = []
     preview, problems = [], []
     for row in edited.itertuples(index=False):
-        code, qty, override = row[0], row[1], row[2]
+        code, qty, typed_price = row[0], row[1], row[2]
         if blank(code) or not normalize(code):
             continue
         qty = 0.0 if blank(qty) else float(qty)
         found = catalog.resolve(code)
-        typed = not blank(override)
-        price = float(override) if typed else found.unit_price
+        list_price = found.unit_price
+        price = None if blank(typed_price) else round(float(typed_price), 2)
         if price is None:
             problems.append(f"{found.code}: {found.note or 'enter the price'}")
         elif qty <= 0:
             problems.append(f"{found.code}: enter a quantity")
         else:
             lines.append(QuoteLine(found.description, qty, price))
+        if price is None:
+            source = "–"
+        elif list_price is not None and abs(price - list_price) < 0.005:
+            source = "list price"
+        elif list_price:
+            source = f"{(price / list_price - 1) * 100:+.1f}%"
+        else:
+            source = "your price"
         preview.append({
             "Code": found.code,
             "Description (on quotation)": found.description,
             "Found by": found.matched_by or "–",
-            "Unit Price (SGD)": None if price is None else round(price, 2),
-            "Price from": "typed" if typed else ("masterlist" if price else "–"),
-            "Amount (SGD)": None if price is None else round(qty * round(price, 2), 2),
+            "List Price (SGD)": list_price,
+            "Unit Price (SGD)": price,
+            "vs List": source,
+            "Amount (SGD)": None if price is None else round(qty * price, 2),
             "Note": found.note,
         })
     if preview:
         money = st.column_config.NumberColumn(format="%.2f")
         st.dataframe(pd.DataFrame(preview), hide_index=True, width="stretch",
-                     column_config={"Unit Price (SGD)": money, "Amount (SGD)": money})
+                     column_config={"List Price (SGD)": money, "Unit Price (SGD)": money,
+                                    "Amount (SGD)": money,
+                                    "vs List": st.column_config.TextColumn(width="small")})
         st.markdown(f"**Total (SGD):** {sum(line.amount for line in lines):,.2f}")
 
     st.subheader("3. Quotation details")

@@ -188,3 +188,45 @@ class CustomerBook:
         others = [c for c in self.all() if c.company.strip().lower() != customer.company.strip().lower()]
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.path.write_text(json.dumps([asdict(c) for c in [customer] + others[:49]], indent=2))
+
+
+def _blank(value) -> bool:
+    import pandas as pd
+
+    return value is None or (not isinstance(value, str) and pd.isna(value))
+
+
+def fill_list_prices(df, catalog, filled: dict, code_col: str = "Code",
+                     price_col: str = "Unit Price (SGD)"):
+    """Put the list price into item rows that have a code but no price yet.
+
+    The price stays editable, so a discounted price can be typed over it.
+    ``filled`` remembers {row: (code, price)} for prices put in this way, so
+    when a row's code is changed it gets the new item's list price (unless the
+    price was edited by hand). Returns (rows, whether anything changed).
+    """
+    from .pricing import normalize
+
+    out = df.copy()
+    changed = False
+    for idx, row in out.iterrows():
+        code, price = row[code_col], row[price_col]
+        key = "" if _blank(code) else normalize(code)
+        if not key:
+            filled.pop(idx, None)
+            continue
+        before = filled.get(idx)
+        stale = (before is not None and before[0] != key and not _blank(price)
+                 and round(float(price), 2) == before[1])
+        if not (_blank(price) or stale):
+            continue
+        list_price = catalog.resolve(code).unit_price
+        if list_price is not None:
+            out.at[idx, price_col] = list_price
+            filled[idx] = (key, list_price)
+            changed = True
+        elif stale:  # new item has no list price: don't keep the old item's
+            out.at[idx, price_col] = float("nan")
+            filled.pop(idx, None)
+            changed = True
+    return out, changed

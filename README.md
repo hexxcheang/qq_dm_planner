@@ -39,8 +39,11 @@ In the **Quotation** tab:
    no.** (e.g. `FA0401C`) and the quantity. The app finds the item in the
    price masterlist (`DMO_Lens_Price_List_Masterlist_...xlsx`) and uses its
    **Direct Customer Buying Price (SGD) - overseas customer bear freight cost
-   from SG**, rounded to cents. Items without that price (e.g. microscope
-   lenses, lens accessories) ask for a typed price.
+   from SG**, rounded to cents. That price fills in by itself in the table;
+   type a different Unit Price to give a discount (the preview shows the
+   difference from the list price), or clear it to get the list price back.
+   Items without a list price (e.g. microscope lenses, lens accessories) ask
+   for a typed price.
 3. The description is the **product code** followed by the item's series
    heading from the price list, e.g. `28160140, 1/1.8" 5MP FA Series`. Items
    the list has no product code for (some accessories and special lenses)

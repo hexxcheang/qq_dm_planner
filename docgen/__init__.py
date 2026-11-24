@@ -1,2 +1,2 @@
 # Shown in the app so it is easy to tell which version is running.
-VERSION = "1.7 – masterlist quotation prices"
+VERSION = "1.8 – editable quotation prices"
