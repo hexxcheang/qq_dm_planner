@@ -84,6 +84,11 @@ def po_template(tmp_path):
     ws["A19"] = ("REMARK :\n1) PLEASE CONSOLE SHIPMENT WITH OTHER. NO PARTIAL SHIPMENT IS "
                  "ALLOWED. SHIP VIA THIRDPARTY FEDEX.\nSHIPPING ADDRESS :\nJM VISTEC SYSTEM PTE LTD")
     ws["A21"] = "IMPORTANT: PLEASE ADVICE THE DELIVERY STATUS."
+    ws["E21"], ws["E22"], ws["E26"] = ("For and on behalf of", "DM OPTICAL PTE LTD",
+                                       "AUTHORISED SIGNATURE")
+    ws.row_dimensions[24].height, ws.row_dimensions[25].height = 9.9, 6.45
+    for col in "EFGH":  # the signature line
+        ws[f"{col}25"].border = Border(bottom=thin)
     ws.merge_cells("A19:C19")
     ws["G20"], ws["H20"] = "Total (USD)", "=SUM(H16:H19)"
     path = tmp_path / "po_template.xlsx"
@@ -172,3 +177,40 @@ def test_po_template_typos_corrected(po_template):
     assert "PLEASE ADVISE THE DELIVERY STATUS" in texts and "ADVICE" not in texts
     assert "PLEASE CONSOLIDATE SHIPMENT WITH OTHERS." in texts and "CONSOLE " not in texts
     assert "SHIP VIA THIRD-PARTY FEDEX" in texts
+
+
+def _signature_image(tmp_path):
+    from PIL import Image
+
+    img = Image.new("RGBA", (665, 374), (255, 255, 255, 0))
+    px = img.load()
+    for x in range(10, 200):
+        px[x, 200 + (x % 20)] = (0, 0, 0, 255)
+    for x in range(290, 665):
+        for y in range(374):
+            if 170 ** 2 <= (x - 477) ** 2 + (y - 187) ** 2 <= 185 ** 2:
+                px[x, y] = (50, 50, 150, 255)
+    path = tmp_path / "signature_stamp.png"
+    img.save(path)
+    return path
+
+
+def test_po_signed_under_dm_optical(tmp_path, po_template):
+    po = SupplierPO(date(2026, 11, 24), 1, [POLine("ML5010C", 2, 52.49)])
+    pdf_path = generate_supplier_po(po, po_template, tmp_path, _signature_image(tmp_path))
+    with pdfplumber.open(pdf_path) as pdf:
+        page = pdf.pages[0]
+        words = page.extract_words()
+        dm = next(w for w in words if w["text"] == "OPTICAL" and w["top"] > 300)
+        authorised = next(w for w in words if w["text"] == "AUTHORISED")
+        [img] = page.images
+        assert img["top"] > dm["bottom"]  # under "DM OPTICAL PTE LTD"
+        assert img["bottom"] < authorised["top"]  # clear of "AUTHORISED SIGNATURE"
+        assert abs(img["x0"] - dm["x0"]) < 30  # starts under the text above
+        assert round(img["x1"] - img["x0"]) == 126
+
+
+def test_po_unsigned_without_image(tmp_path, po_template):
+    po = SupplierPO(date(2026, 11, 24), 1, [POLine("ML5010C", 2, 52.49)])
+    with pdfplumber.open(generate_supplier_po(po, po_template, tmp_path)) as pdf:
+        assert pdf.pages[0].images == []

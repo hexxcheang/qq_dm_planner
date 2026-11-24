@@ -17,6 +17,10 @@ from openpyxl.worksheet.worksheet import Worksheet
 
 from .pdf_render import EMU_PER_PT, col_width_pt, row_height_pt
 
+# The signature & stamp image is drawn this wide on every document (126 pt = 4.5 cm),
+# its size on DM Optical's signed quotation it was cut from.
+SIGNATURE_WIDTH_PT = 126.4
+
 
 def company_stamp(signature_image: Path):
     """The blue company stamp from the signature & stamp image (a PIL image), or None."""

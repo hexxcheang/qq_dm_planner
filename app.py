@@ -338,6 +338,9 @@ def supplier_po_page() -> None:
         st.warning(f"{po_no(po_date, seq)} has already been used.")
 
     st.subheader("3. Generate")
+    if not STORE.path(SIGNATURE):
+        st.caption("ℹ️ To sign POs automatically, upload the signature & company stamp image "
+                   "once in the Quotation tab's upload box.")
     if not lines and not problems:
         problems.append("Add at least one item.")
     for p in problems:
@@ -345,7 +348,7 @@ def supplier_po_page() -> None:
     if st.button("Generate PO", type="primary", disabled=bool(problems)):
         with st.spinner("Creating the PO…"):
             pdf = generate_supplier_po(draft, STORE.path(PO_TEMPLATE),
-                                       OUTPUT_DIR / po_date.isoformat())
+                                       OUTPUT_DIR / po_date.isoformat(), STORE.path(SIGNATURE))
         PO_REGISTER.record(po_date, int(seq), ", ".join(line.model for line in lines))
         st.session_state["spo_generated"] = draft.po_no
         st.session_state["spo_pdf"] = str(pdf)

@@ -9,7 +9,8 @@ from pathlib import Path
 
 from openpyxl import Workbook, load_workbook
 
-from .pdf_render import read_image_crops, render_sheet
+from .pdf_render import PADDING, read_image_crops, render_sheet, row_height_pt
+from .stamp import SIGNATURE_WIDTH_PT, column_left, place_image, row_bottom
 from .xlsx_utils import find_label, layout_item_block, replace_text
 
 DELIVERY_DAYS = 10
@@ -17,6 +18,11 @@ DELIVERY_DAYS = 10
 # Cell positions in the PO template.
 PO_NO, PO_DATE, PO_DELIVERY = "G6", "G7", "G8"
 ITEMS_FIRST, ITEMS_LAST = 16, 18  # the remarks row below them closes the item box
+
+# Signature & stamp go under "For and on behalf of / DM OPTICAL PTE LTD", resting on
+# the signature line, so the stamp stays clear of "AUTHORISED SIGNATURE" below it.
+SIGN_COL, SIGN_BELOW = "E", "DM OPTICAL PTE LTD"
+SIGNATURE_BELOW_LINE_PT = 0.0
 
 # Typos in the original PO template, corrected even in copies uploaded before the fix.
 TEXT_FIXES = {
@@ -65,8 +71,8 @@ def _number(value: float) -> float | int:
     return int(value) if float(value).is_integer() else value
 
 
-def build_supplier_po(po: SupplierPO, template: Path) -> Workbook:
-    """The PO template filled in for ``po`` (in memory)."""
+def build_supplier_po(po: SupplierPO, template: Path, signature: Path | None = None) -> Workbook:
+    """The PO template filled in for ``po`` (in memory), signed if ``signature`` is given."""
     wb = load_workbook(template)
     ws = wb.active
     replace_text(ws, TEXT_FIXES)
@@ -89,6 +95,8 @@ def build_supplier_po(po: SupplierPO, template: Path) -> Workbook:
     total_row = find_label(ws, "G", "Total (USD)", start_row=ITEMS_FIRST)
     last_item = rows[-1] if rows else ITEMS_FIRST
     ws[f"H{total_row}"] = f"=SUM(H{ITEMS_FIRST}:H{last_item})"
+    if signature:
+        add_signature(ws, signature)
 
     ws.sheet_properties.pageSetUpPr.fitToPage = True
     ws.page_setup.fitToWidth = 1
@@ -96,10 +104,32 @@ def build_supplier_po(po: SupplierPO, template: Path) -> Workbook:
     return wb
 
 
-def generate_supplier_po(po: SupplierPO, template: Path, out_dir: Path) -> Path:
+def add_signature(ws, image_path: Path) -> None:
+    """Sign under "DM OPTICAL PTE LTD", making room above the signature line if needed."""
+    from PIL import Image
+
+    label_row = find_label(ws, SIGN_COL, SIGN_BELOW, start_row=ITEMS_FIRST)
+    line_row = next(r for r in range(label_row + 1, ws.max_row + 1)
+                    if ws[f"{SIGN_COL}{r}"].border.bottom is not None
+                    and ws[f"{SIGN_COL}{r}"].border.bottom.style)
+    with Image.open(image_path) as img:
+        height = SIGNATURE_WIDTH_PT * img.height / img.width
+    top = row_bottom(ws, label_row) + 2
+    room = sum(row_height_pt(ws, r) for r in range(label_row + 1, line_row + 1))
+    needed = height - SIGNATURE_BELOW_LINE_PT + 2
+    if room < needed and line_row - 1 > label_row:  # the template leaves ~1 cm: make room
+        grow = line_row - 1
+        ws.row_dimensions[grow].height = row_height_pt(ws, grow) + needed - room
+    place_image(ws, Path(image_path), column_left(ws, SIGN_COL) + PADDING, top,
+                SIGNATURE_WIDTH_PT)
+
+
+def generate_supplier_po(po: SupplierPO, template: Path, out_dir: Path,
+                         signature: Path | None = None) -> Path:
     """Create the PO as a PDF in ``out_dir`` and return its path."""
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     out = out_dir / f"{re.sub(r'[^A-Za-z0-9._-]+', '_', po.po_no)}_Chiopt.pdf"
-    out.write_bytes(render_sheet(build_supplier_po(po, template).active, read_image_crops(template)))
+    out.write_bytes(render_sheet(build_supplier_po(po, template, signature).active,
+                                 read_image_crops(template)))
     return out

@@ -86,6 +86,11 @@ type the price in the table. A typed price always overrides the list.
 The PO gets PO# `PO[YYMMDD-NN]` for the PO date (today unless changed), the
 delivery date 10 days later, the items and the Total (USD).
 
+Once the signature & company stamp image is uploaded (in the Quotation tab),
+every PO is signed and stamped under "For and on behalf of / DM OPTICAL PTE
+LTD", resting on the signature line; the gap above the line is made taller
+to fit it.
+
 The PO and quotation templates, the price lists and the signature & stamp
 hold buying prices, contacts and signatures, so they are **not** in this
 repository. Upload them once in the app; upload one again whenever it changes,

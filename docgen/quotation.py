@@ -12,7 +12,7 @@ from pathlib import Path
 from openpyxl import Workbook, load_workbook
 
 from .pdf_render import LINE_SPACING, PADDING, read_image_crops, render_sheet, row_height_pt
-from .stamp import place_image
+from .stamp import SIGNATURE_WIDTH_PT, place_image
 from .xlsx_utils import find_label, layout_item_block, replace_text
 
 # Cell positions in the quotation template.
@@ -23,7 +23,6 @@ ITEMS_FIRST, ITEMS_LAST = 15, 18  # ITEMS_LAST carries the box's bottom border
 # Signature & company stamp: placed and sized as on the signed quotation they were cut
 # from (measured at 0.19 pt per pixel of that screenshot), relative to "Prepared by:".
 SIGNATURE_LABEL = "Prepared by:"
-SIGNATURE_WIDTH_PT = 126.4
 SIGNATURE_OFFSET_PT = (8.4, -7.4)  # image top-left from the label's text start and baseline
 
 # Typos in the original quotation template, corrected even in copies uploaded before the fix.
