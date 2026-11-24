@@ -269,3 +269,46 @@ def test_invoice_without_stamp_image(tmp_path):
     docs = generate_documents(_po(1), DAY, 1, tmp_path)
     with pdfplumber.open(docs.invoice_pdf) as pdf:
         assert len(pdf.pages[0].images) == 1  # logo only
+
+
+def test_combine_purchase_orders():
+    from docgen.models import combine_purchase_orders
+
+    a = PurchaseOrder("POR13495", [LineItem("73620230 (ML5010C)", 2, "Pcs", 85)])
+    b = PurchaseOrder("POR13413", [LineItem("15370180 (HC2505A)", 4, "Pcs", 93),
+                                   LineItem("Lens cap", 4, "Pcs", 2.5)])
+    unnumbered = PurchaseOrder("", [LineItem("Adapter", 1, "Pcs", 10)])
+    combined = combine_purchase_orders([a, b, unnumbered, a])  # the same PO twice: listed once
+    assert combined.po_number == "POR13495, POR13413"
+    assert [i.description for i in combined.items] == [
+        "73620230 (ML5010C)", "15370180 (HC2505A)", "Lens cap", "Adapter", "73620230 (ML5010C)"]
+    assert combined.total == 170 + 372 + 10 + 10 + 170
+    combined.items[0].qty = 99
+    assert a.items[0].qty == 2  # the original POs are left untouched
+
+
+@pytest.mark.parametrize("n_pos", [2, 6])
+def test_invoice_and_do_for_several_pos(tmp_path, n_pos):
+    from docgen.models import combine_purchase_orders
+
+    pos = [PurchaseOrder(f"POR1349{i}", [LineItem(f"7362023{i} (ML501{i}C)", 2, "Pcs", 85 + i)])
+           for i in range(n_pos)]
+    combined = combine_purchase_orders(pos)
+    docs = generate_documents(combined, DAY, 1, tmp_path)
+    numbers = [po.po_number for po in pos]
+    for path in (docs.invoice_pdf, docs.do_pdf):
+        with pdfplumber.open(path) as pdf:
+            page = pdf.pages[0]
+            text = page.extract_text()
+            words = page.extract_words()
+        for number in numbers:  # every PO number shown, none overlapping another line
+            assert number in text.replace(",", " ").split()
+        for item in combined.items:
+            assert item.description.split()[0] in text
+        overlapping = [(v["text"], w["text"]) for i, v in enumerate(words) for w in words[i + 1:]
+                       if v["x0"] < w["x1"] - 1 and w["x0"] < v["x1"] - 1
+                       and v["top"] < w["bottom"] - 1 and w["top"] < v["bottom"] - 1]
+        assert overlapping == []  # no text drawn over other text
+    total = sum(item.amount for item in combined.items)
+    with pdfplumber.open(docs.invoice_pdf) as pdf:
+        assert f"${total:,.2f}" in pdf.pages[-1].extract_text()

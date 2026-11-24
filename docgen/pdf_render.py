@@ -226,6 +226,13 @@ def _font_rgb(font) -> tuple[float, float, float]:
     return (0.0, 0.0, 0.0)
 
 
+def wrapped_lines(text: str, size: float, cell_width: float, bold: bool = False) -> int:
+    """How many lines ``text`` takes in a wrapping, unbordered cell this wide (as drawn here)."""
+    _register_fonts()
+    room = cell_width - 2 * PADDING + WRAP_SLACK
+    return len(_wrap(text, BOLD if bold else REGULAR, size, max(1.0, room)))
+
+
 def _wrap(text: str, font: str, size: float, width: float) -> list[str]:
     lines: list[str] = []
     for paragraph in text.split("\n"):

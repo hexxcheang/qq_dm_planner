@@ -23,7 +23,7 @@ from openpyxl import load_workbook
 
 from docgen import VERSION
 from docgen.generator import INVOICE_TEMPLATE, generate_documents
-from docgen.models import Customer, LineItem, PurchaseOrder
+from docgen.models import Customer, LineItem, PurchaseOrder, combine_purchase_orders
 from docgen.numbering import Register, do_no, invoice_no
 from docgen.po_parser import SUPPORTED_TYPES, ParseError, claude_available, parse_po
 from docgen.pricing import DmoCatalog, PriceBook, normalize
@@ -107,41 +107,59 @@ def frame_items(df: pd.DataFrame) -> tuple[list[LineItem], list[str]]:
 
 
 def invoice_page(use_claude: bool) -> None:
-    st.subheader("1. Upload the customer's Purchase Order")
-    upload = st.file_uploader("PO file", type=[t.lstrip(".") for t in SUPPORTED_TYPES])
+    st.subheader("1. Upload the customer's Purchase Order(s)")
+    uploads = st.file_uploader(
+        "PO file(s)", type=[t.lstrip(".") for t in SUPPORTED_TYPES], accept_multiple_files=True,
+        help="Select several POs from the same customer to put all their items on one "
+             "invoice and one DO.")
 
-    if upload is None:
-        st.info("Upload a PO (PDF, Excel, CSV or a photo) to begin.")
+    if not uploads:
+        st.info("Upload one or more POs (PDF, Excel, CSV or a photo) to begin. Several POs "
+                "from the same customer are combined into a single invoice and DO.")
         return
 
-    data = upload.getvalue()
-    file_key = hashlib.sha1(data).hexdigest()
-    if (st.session_state.get("file_key") != file_key
-            or st.session_state.get("reader_claude") != use_claude):
-        with st.spinner("Reading the PO… (scans take a few seconds per page)"):
-            try:
-                po, reader = parse_po(data, upload.name, use_claude=use_claude)
-            except ParseError as exc:
-                st.warning(str(exc))
-                po, reader = PurchaseOrder(), "manual"
-            except Exception as exc:  # network/API problems: let the user carry on by hand
-                st.error(f"Could not read the PO automatically: {exc}")
-                po, reader = PurchaseOrder(), "manual"
-        st.session_state.update(file_key=file_key, reader_claude=use_claude, po=po,
-                                reader=reader, generated=None)
+    # Read each PO once; remember the result for as long as it stays uploaded.
+    readings = st.session_state.setdefault("po_readings", {})
+    keys = []
+    for up in uploads:
+        data = up.getvalue()
+        key = (hashlib.sha1(data).hexdigest(), use_claude)
+        if key not in readings:
+            with st.spinner(f"Reading {up.name}… (scans take a few seconds per page)"):
+                try:
+                    po, reader = parse_po(data, up.name, use_claude=use_claude)
+                    problem = ""
+                except ParseError as exc:
+                    po, reader, problem = PurchaseOrder(), "", str(exc)
+                except Exception as exc:  # network/API problems: let the user carry on by hand
+                    po, reader, problem = PurchaseOrder(), "", f"Could not read it: {exc}"
+            readings[key] = (up.name, po, reader, problem)
+        if key not in keys:  # the same file uploaded twice counts once
+            keys.append(key)
 
-    po: PurchaseOrder = st.session_state["po"]
-    if st.session_state["reader"] != "manual":
-        if po.items:
-            st.success(f"Read {len(po.items)} item(s) from the PO "
-                       f"({st.session_state['reader']}). Please check them below.")
+    file_key = hashlib.sha1(repr(keys).encode()).hexdigest()
+    if st.session_state.get("file_key") != file_key:
+        st.session_state.update(file_key=file_key, generated=None)
+    po = combine_purchase_orders([readings[k][1] for k in keys])
+
+    for name, one, reader, problem in (readings[k] for k in keys):
+        label = f"**{one.po_number or name}**" + (f" ({name})" if one.po_number else "")
+        if problem:
+            st.warning(f"{label}: {problem}")
+        elif one.items:
+            st.success(f"{label}: read {len(one.items)} item(s), "
+                       f"total {one.total:,.2f} ({reader}).")
         else:
-            st.warning("No line items found – please type them in below.")
+            st.warning(f"{label}: no line items found – please type them in below.")
+    if len(keys) > 1:
+        st.info(f"{len(keys)} POs combined into one invoice and DO: {len(po.items)} item(s), "
+                f"total {po.total:,.2f}. Please check them below.")
 
     st.subheader("2. Check the details")
     col1, col2, col3 = st.columns(3)
     with col1:
-        po_number = st.text_input("Customer PO No.", value=po.po_number, key=f"po_{file_key}")
+        po_number = st.text_input("Customer PO No.", value=po.po_number, key=f"po_{file_key}",
+                                  help="With several POs, all their numbers are listed.")
     with col2:
         doc_date = st.date_input("Invoice / DO date", value=date.today(), format="DD/MM/YYYY")
     with col3:

@@ -140,7 +140,10 @@ Developers can also run `pip install -r requirements.txt` and
 
 In the page that opens:
 
-1. Upload the customer's PO (PDF, scanned PDF, photo, Excel or CSV).
+1. Upload the customer's PO (PDF, scanned PDF, photo, Excel or CSV). To bill
+   several POs from the same customer together, select them all at once: all
+   their items go on one invoice and one DO, the total adds them all up, and
+   the PO numbers are listed together (e.g. "POR13495, POR13413").
 2. Check the PO number and items it read, and fix anything in the table.
 3. Pick the date. The Invoice No. and DO No. update to match.
 4. Click **Generate Invoice & DO**, check the previews and download the PDFs.

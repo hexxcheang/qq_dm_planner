@@ -3,15 +3,19 @@
 from __future__ import annotations
 
 import re
+from copy import copy
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
 
 from openpyxl import Workbook, load_workbook
+from openpyxl.styles import Alignment
+from openpyxl.utils import column_index_from_string
 
 from .models import Customer, PurchaseOrder
 from .numbering import do_no, invoice_no
-from .pdf_render import TableRows, read_image_crops, render_sheet
+from .pdf_render import (LINE_SPACING, TableRows, col_width_pt, read_image_crops, render_sheet,
+                         row_height_pt, wrapped_lines)
 from .stamp import column_left, company_stamp, place_image, row_bottom
 from .xlsx_utils import find_label, layout_item_block
 
@@ -47,6 +51,30 @@ def _number(value: float) -> float | int:
     return int(value) if float(value).is_integer() else value
 
 
+def _write_po_numbers(ws, cell: str, label: str, last_col: str, text: str) -> None:
+    """Write the customer PO number(s) into ``cell``.
+
+    Several combined POs can be too long for the space: then the numbers wrap
+    onto extra lines across the empty cells up to ``last_col``, top-aligned with
+    ``label``, and the row grows so nothing overlaps.
+    """
+    target = ws[cell]
+    target.value = text
+    row, first = target.row, target.column
+    width = sum(col_width_pt(ws, c) for c in range(first, column_index_from_string(last_col) + 1))
+    size = float(target.font.sz or 11)
+    lines = wrapped_lines(text, size, width, bool(target.font.b))
+    if lines <= 1 and wrapped_lines(text, size, col_width_pt(ws, first), bool(target.font.b)) <= 1:
+        return  # fits as in the template
+    ws.merge_cells(f"{cell}:{last_col}{row}")
+    target.alignment = Alignment(horizontal="left", vertical="top", wrap_text=True)
+    label_alignment = copy(ws[label].alignment)
+    label_alignment.vertical = "top"
+    ws[label].alignment = label_alignment
+    ws.row_dimensions[row].height = max(row_height_pt(ws, row),
+                                        lines * size * LINE_SPACING + 3)
+
+
 def _write_customer(ws, anchor: tuple[str, int], customer: Customer) -> None:
     col, row = anchor
     for offset, text in enumerate(customer.lines()):
@@ -63,7 +91,7 @@ def build_invoice(po: PurchaseOrder, doc_date: date, seq: int,
     wb = load_workbook(template)
     ws = wb.active
 
-    ws[INV_PO_NO] = po.po_number
+    _write_po_numbers(ws, INV_PO_NO, "A5", "F", po.po_number)
     ws[INV_DATE] = datetime.combine(doc_date, datetime.min.time())
     ws[INV_NO] = invoice_no(doc_date, seq)
     ws[INV_DO_NO] = do_no(doc_date, seq)
@@ -103,7 +131,7 @@ def build_delivery_order(po: PurchaseOrder, doc_date: date, seq: int,
 
     ws[DO_DATE] = datetime.combine(doc_date, datetime.min.time())
     ws[DO_NO] = do_no(doc_date, seq)
-    ws[DO_PO_NO] = po.po_number
+    _write_po_numbers(ws, DO_PO_NO, "F11", "H", po.po_number)
     if po.customer:
         _write_customer(ws, DO_SHIP_TO_ROWS, po.customer)
 
