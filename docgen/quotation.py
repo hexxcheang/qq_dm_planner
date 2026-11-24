@@ -10,14 +10,24 @@ from datetime import date, datetime
 from pathlib import Path
 
 from openpyxl import Workbook, load_workbook
+from openpyxl.drawing.image import Image
+from openpyxl.drawing.spreadsheet_drawing import AnchorMarker, OneCellAnchor
+from openpyxl.drawing.xdr import XDRPositiveSize2D
 
-from .pdf_render import read_image_crops, render_sheet
+from .pdf_render import (EMU_PER_PT, LINE_SPACING, PADDING, col_width_pt, read_image_crops,
+                         render_sheet, row_height_pt)
 from .xlsx_utils import find_label, layout_item_block, replace_text
 
 # Cell positions in the quotation template.
 ATTENTION_ROWS = ("A", 8)  # company, address line 1, address line 2, person, email
 Q_DATE, Q_NO, Q_VALID = "H9", "H10", "H11"
 ITEMS_FIRST, ITEMS_LAST = 15, 18  # ITEMS_LAST carries the box's bottom border
+
+# Signature & company stamp: placed and sized as on the signed quotation they were cut
+# from (measured at 0.19 pt per pixel of that screenshot), relative to "Prepared by:".
+SIGNATURE_LABEL = "Prepared by:"
+SIGNATURE_WIDTH_PT = 126.4
+SIGNATURE_OFFSET_PT = (8.4, -7.4)  # image top-left from the label's text start and baseline
 
 # Typos in the original quotation template, corrected even in copies uploaded before the fix.
 TEXT_FIXES = {"Shipping Term: Ex-work Singapore": "Shipping Term: Ex-Works Singapore"}
@@ -78,8 +88,8 @@ def _number(value: float) -> float | int:
     return int(value) if float(value).is_integer() else value
 
 
-def build_quotation(q: Quotation, template: Path) -> Workbook:
-    """The quotation template filled in for ``q`` (in memory)."""
+def build_quotation(q: Quotation, template: Path, signature: Path | None = None) -> Workbook:
+    """The quotation template filled in for ``q`` (in memory), signed if ``signature`` is given."""
     wb = load_workbook(template)
     ws = wb.active
     replace_text(ws, TEXT_FIXES)
@@ -110,6 +120,8 @@ def build_quotation(q: Quotation, template: Path) -> Workbook:
     total_row = find_label(ws, "G", "Total (SGD)", start_row=ITEMS_FIRST)
     last_item = rows[-1] if rows else ITEMS_FIRST
     ws[f"H{total_row}"] = f"=SUM(H{ITEMS_FIRST}:H{last_item})"
+    if signature:
+        add_signature(ws, signature)
 
     ws.sheet_properties.pageSetUpPr.fitToPage = True
     ws.page_setup.fitToWidth = 1
@@ -117,13 +129,44 @@ def build_quotation(q: Quotation, template: Path) -> Workbook:
     return wb
 
 
-def generate_quotation(q: Quotation, template: Path, out_dir: Path) -> Path:
+def add_signature(ws, image_path: Path) -> None:
+    """Put the signature & stamp image next to the "Prepared by:" label."""
+    label_row = find_label(ws, "A", SIGNATURE_LABEL)
+    size = float(ws[f"A{label_row}"].font.sz or 11)
+    row_top = sum(row_height_pt(ws, r) for r in range(1, label_row))
+    # The label is bottom-aligned on one line (see pdf_render._draw_text).
+    baseline = row_top + row_height_pt(ws, label_row) - 1 - size * LINE_SPACING + size * 0.98
+    x = PADDING + SIGNATURE_OFFSET_PT[0]
+    y = baseline + SIGNATURE_OFFSET_PT[1]
+
+    col, col_left = 1, 0.0
+    while col_left + col_width_pt(ws, col) <= x:
+        col_left += col_width_pt(ws, col)
+        col += 1
+    row, row_top = 1, 0.0
+    while row_top + row_height_pt(ws, row) <= y:
+        row_top += row_height_pt(ws, row)
+        row += 1
+
+    img = Image(str(image_path))
+    width = SIGNATURE_WIDTH_PT
+    height = width * img.height / img.width
+    img.anchor = OneCellAnchor(
+        _from=AnchorMarker(col=col - 1, colOff=int((x - col_left) * EMU_PER_PT),
+                           row=row - 1, rowOff=int((y - row_top) * EMU_PER_PT)),
+        ext=XDRPositiveSize2D(cx=int(width * EMU_PER_PT), cy=int(height * EMU_PER_PT)))
+    ws.add_image(img)
+
+
+def generate_quotation(q: Quotation, template: Path, out_dir: Path,
+                       signature: Path | None = None) -> Path:
     """Create the quotation as a PDF in ``out_dir`` and return its path."""
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     company = re.sub(r"[^A-Za-z0-9._-]+", "_", q.customer.company).strip("_")[:40] or "customer"
     out = out_dir / f"{q.quotation_no}_{company}.pdf"
-    out.write_bytes(render_sheet(build_quotation(q, template).active, read_image_crops(template)))
+    out.write_bytes(render_sheet(build_quotation(q, template, signature).active,
+                                 read_image_crops(template)))
     return out
 
 

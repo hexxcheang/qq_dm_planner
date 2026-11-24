@@ -27,18 +27,21 @@ from docgen.models import Customer, LineItem, PurchaseOrder
 from docgen.numbering import Register, do_no, invoice_no
 from docgen.po_parser import SUPPORTED_TYPES, ParseError, claude_available, parse_po
 from docgen.pricing import QUOTE_FACTOR, DmoCatalog, PriceBook, normalize
+from docgen.paths import HOME, OUTPUT, RECORDS, migrate_legacy
 from docgen.private_files import (CHIOPT_PRICES, DMO_PRICES, PO_TEMPLATE, QUOTATION_TEMPLATE,
-                                  Kind, PrivateStore)
+                                  SIGNATURE, Kind, PrivateStore)
 from docgen.quotation import (CustomerBook, Quotation, QuoteCustomer, QuoteLine,
                               generate_quotation, quotation_no)
 from docgen.supplier_po import DELIVERY_DAYS, POLine, SupplierPO, generate_supplier_po, po_no
 
 ROOT = Path(__file__).resolve().parent
-OUTPUT_DIR = ROOT / "output"
-REGISTER = Register(ROOT / "data" / "register.json")
-PO_REGISTER = Register(ROOT / "data" / "supplier_po_register.json")
-QUOTE_REGISTER = Register(ROOT / "data" / "quotation_register.json")
-CUSTOMERS = CustomerBook(ROOT / "data" / "quote_customers.json")
+# Saved files, records and PDFs live outside the app folder (docgen/paths.py), so they
+# survive downloading a new version of the app.
+OUTPUT_DIR = OUTPUT
+REGISTER = Register(RECORDS / "register.json")
+PO_REGISTER = Register(RECORDS / "supplier_po_register.json")
+QUOTE_REGISTER = Register(RECORDS / "quotation_register.json")
+CUSTOMERS = CustomerBook(RECORDS / "quote_customers.json")
 STORE = PrivateStore()
 ITEM_COLUMNS = ["Description", "Qty", "Units", "Unit Price"]
 ORDER_COLUMNS = ["Code", "Qty", "Unit Price (USD)"]
@@ -210,18 +213,26 @@ def load_price_book(chiopt: str, dmo: str, _stamp: tuple) -> PriceBook:
     return PriceBook.from_files(Path(chiopt), Path(dmo))
 
 
-def private_files_setup(kinds: tuple[Kind, ...], title: str, key: str) -> None:
+@st.cache_resource
+def bring_over_earlier_files() -> int:
+    """Once per app start: copy files an earlier version kept inside the app folder."""
+    return len(migrate_legacy(ROOT))
+
+
+def private_files_setup(kinds: tuple[Kind, ...], title: str, key: str,
+                        optional: tuple[Kind, ...] = ()) -> None:
     missing = STORE.missing(kinds)
     with st.expander(title + ("" if missing else " ✅"), expanded=bool(missing)):
-        st.caption("These files hold buying prices and contacts, so they are kept only on this "
-                   "computer (in the app's `private` folder), never online. Upload them once; "
-                   "upload again whenever one is updated.")
-        for kind in kinds:
+        st.caption("These files hold buying prices, contacts and signatures, so they are kept "
+                   "only on this computer, never online. Upload them once — they stay saved when "
+                   "you update the app. Upload a new version any time to replace one.")
+        for kind in kinds + optional:
             described = STORE.describe(kind)
             mark = "✅" if described else "❌"
             st.markdown(f"{mark} **{kind.label}** – {described or f'not uploaded (e.g. {kind.example})'}")
-        uploads = st.file_uploader("Upload the Excel files (you can select several at once)",
-                                   type=["xlsx"], accept_multiple_files=True, key=key)
+        uploads = st.file_uploader("Upload files (you can select several at once)",
+                                   type=["xlsx", "png", "jpg", "jpeg"],
+                                   accept_multiple_files=True, key=key)
         if uploads:
             done = st.session_state.setdefault("private_done", set())
             changed = False
@@ -238,7 +249,7 @@ def private_files_setup(kinds: tuple[Kind, ...], title: str, key: str) -> None:
                     st.success(f"Saved {up.name} as the {kind.label}.")
                     changed = True
                 else:
-                    st.error(f"{up.name} doesn't look like a PO/quotation template or a price list.")
+                    st.error(f"{up.name} doesn't look like a template, a price list or an image.")
             if changed:
                 st.rerun()
 
@@ -371,7 +382,8 @@ def customer_form() -> QuoteCustomer:
 
 def quotation_page() -> None:
     st.caption(f"Prices: JM Buying Price (SGD) from the DMO price list ÷ {QUOTE_FACTOR}")
-    private_files_setup(QUOTATION_FILES, "Price list & quotation template", "private_upload_quote")
+    private_files_setup(QUOTATION_FILES, "Price list, quotation template & signature",
+                        "private_upload_quote", optional=(SIGNATURE,))
     if STORE.missing(QUOTATION_FILES):
         st.info("Upload the files above to start making quotations.")
         return
@@ -447,6 +459,9 @@ def quotation_page() -> None:
         st.warning(f"{quotation_no(q_date, seq)} has already been used.")
 
     st.subheader("4. Generate")
+    if not STORE.path(SIGNATURE):
+        st.caption("ℹ️ Upload the signature & company stamp image in the box at the top to sign "
+                   "quotations automatically.")
     if not customer.company:
         problems.append("Enter the customer's company name.")
     if not lines and not preview:
@@ -456,7 +471,7 @@ def quotation_page() -> None:
     if st.button("Generate Quotation", type="primary", disabled=bool(problems)):
         with st.spinner("Creating the quotation…"):
             pdf = generate_quotation(draft, STORE.path(QUOTATION_TEMPLATE),
-                                     OUTPUT_DIR / q_date.isoformat())
+                                     OUTPUT_DIR / q_date.isoformat(), STORE.path(SIGNATURE))
         QUOTE_REGISTER.record(q_date, int(seq), customer.company)
         CUSTOMERS.remember(customer)
         st.session_state["q_generated"] = draft.quotation_no
@@ -483,8 +498,10 @@ with st.sidebar:
     if not claude_available():
         st.caption("Using the free built-in reader (works offline, reads scans too).")
     st.divider()
+    st.caption(f"Saved files, records and PDFs are kept in:  \n`{HOME}`")
     st.caption(f"Version {VERSION}")
 
+bring_over_earlier_files()
 quote_tab, invoice_tab, supplier_tab = st.tabs(
     ["💬 Quotation (customer)", "🧾 Invoice & DO (customer)", "📦 PO to supplier (Chiopt)"])
 with quote_tab:

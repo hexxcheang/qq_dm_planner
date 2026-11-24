@@ -10,9 +10,11 @@ import pdfplumber
 import pytest
 from openpyxl import Workbook
 from openpyxl.styles import Border, Font, Side
+from PIL import Image
 
+from docgen import paths
 from docgen.pricing import DmoCatalog, read_dmo_catalog, read_product_codes
-from docgen.private_files import QUOTATION_TEMPLATE, classify
+from docgen.private_files import QUOTATION_TEMPLATE, SIGNATURE, PrivateStore, classify
 from docgen.quotation import (CustomerBook, Quotation, QuoteCustomer, QuoteLine, add_one_month,
                               build_quotation, generate_quotation)
 
@@ -74,6 +76,8 @@ def quotation_template(tmp_path):
     ws["H19"].number_format = '"$"#,##0.00_);[Red]\\("$"#,##0.00\\)'
     ws["A22"] = "Delivery Terms: within 2-3 weeks\nShipping Term: Ex-work Singapore"
     ws.merge_cells("A22:G23")
+    ws["A25"], ws["A28"], ws["A29"] = "Prepared by: ", "_____________________", "Signature"
+    ws.row_dimensions[28].height = 23.6
     path = tmp_path / "quotation_template.xlsx"
     wb.save(path)
     return path
@@ -173,3 +177,67 @@ def test_customer_book_remembers_latest_first(tmp_path):
     book.remember(QuoteCustomer("a pte ltd", email="new@a.com"))
     assert [(c.company, c.email) for c in book.all()] == [("a pte ltd", "new@a.com"),
                                                          ("B Pte Ltd", "")]
+
+
+@pytest.fixture
+def signature_png(tmp_path):
+    """A stand-in for the signature & stamp: black scribble left, blue ring right, on white."""
+    img = Image.new("RGB", (660, 350), "white")
+    px = img.load()
+    for x in range(20, 220):
+        px[x, 200 + (x % 30)] = (0, 0, 0)
+    for x in range(300, 660):
+        for y in range(0, 350):
+            if 150 ** 2 <= (x - 480) ** 2 + (y - 175) ** 2 <= 165 ** 2:
+                px[x, y] = (50, 50, 150)
+    path = tmp_path / "signature.png"
+    img.save(path)
+    return path
+
+
+def test_signature_upload_becomes_transparent(tmp_path, signature_png):
+    assert classify(signature_png) == SIGNATURE
+    store = PrivateStore(tmp_path / "saved")
+    assert store.save(signature_png, "my signature.png") == SIGNATURE
+    saved = Image.open(store.path(SIGNATURE))
+    assert saved.mode == "RGBA"
+    assert saved.getpixel((saved.width // 2, saved.height // 2))[3] == 0  # paper is see-through
+    assert saved.getchannel("A").getextrema()[1] == 255  # ink stays solid
+
+
+def test_quotation_is_signed_next_to_prepared_by(tmp_path, quotation_template, signature_png):
+    store = PrivateStore(tmp_path / "saved")
+    store.save(signature_png, "signature.png")
+    ws = build_quotation(_quote(), quotation_template, store.path(SIGNATURE)).active
+    [img] = ws._images
+    label_row = next(r for r in range(1, ws.max_row + 1)
+                     if str(ws[f"A{r}"].value or "").startswith("Prepared by"))
+    anchor = img.anchor._from
+    assert anchor.col == 0 and anchor.row in (label_row - 2, label_row - 1)  # 0-based rows
+    assert round(img.anchor.ext.width / 12700) == 126  # 126 pt wide
+    pdf_path = generate_quotation(_quote(), quotation_template, tmp_path, store.path(SIGNATURE))
+    with pdfplumber.open(pdf_path) as pdf:
+        assert len(pdf.pages[0].images) == 1
+
+
+def test_unsigned_quotation_has_no_image(tmp_path, quotation_template):
+    pdf_path = generate_quotation(_quote(), quotation_template, tmp_path)
+    with pdfplumber.open(pdf_path) as pdf:
+        assert len(pdf.pages[0].images) == 0
+
+
+def test_files_from_earlier_app_folder_are_carried_over(tmp_path, monkeypatch):
+    old_app = tmp_path / "old_app"
+    (old_app / "private").mkdir(parents=True)
+    (old_app / "private" / "quotation_template.xlsx").write_text("old template")
+    (old_app / "data").mkdir()
+    (old_app / "data" / "register.json").write_text("{}")
+    new_home = tmp_path / "home"
+    monkeypatch.setattr(paths, "LEGACY_FOLDERS", {"private": new_home / "Saved files",
+                                                  "data": new_home / "Records",
+                                                  "output": new_home / "Generated documents"})
+    (new_home / "Records").mkdir(parents=True)
+    (new_home / "Records" / "register.json").write_text('{"newer": 1}')
+    copied = paths.migrate_legacy(old_app)
+    assert copied == [new_home / "Saved files" / "quotation_template.xlsx"]
+    assert (new_home / "Records" / "register.json").read_text() == '{"newer": 1}'  # kept

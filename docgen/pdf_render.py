@@ -96,7 +96,7 @@ def _register_fonts() -> None:
 # --------------------------------------------------------------------------- geometry
 
 
-def _col_width_pt(ws: Worksheet, col: int) -> float:
+def col_width_pt(ws: Worksheet, col: int) -> float:
     dim = ws.column_dimensions.get(get_column_letter(col))
     width = dim.width if dim is not None and dim.width else None
     if width is None:
@@ -104,7 +104,7 @@ def _col_width_pt(ws: Worksheet, col: int) -> float:
     return math.trunc(width * MAX_DIGIT_PX + 0.5) * 0.75
 
 
-def _row_height_pt(ws: Worksheet, row: int) -> float:
+def row_height_pt(ws: Worksheet, row: int) -> float:
     dim = ws.row_dimensions.get(row)
     if dim is not None and dim.height is not None:
         return dim.height
@@ -241,10 +241,10 @@ class _Layout:
     def __init__(self, ws: Worksheet, last_row: int, last_col: int):
         self.col_x = [0.0]
         for c in range(1, last_col + 2):
-            self.col_x.append(self.col_x[-1] + _col_width_pt(ws, c))
+            self.col_x.append(self.col_x[-1] + col_width_pt(ws, c))
         self.row_y = [0.0]
         for r in range(1, last_row + 2):
-            self.row_y.append(self.row_y[-1] + _row_height_pt(ws, r))
+            self.row_y.append(self.row_y[-1] + row_height_pt(ws, r))
         self.width = self.col_x[last_col]
         self.height = self.row_y[last_row]
 

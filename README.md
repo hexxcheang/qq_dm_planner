@@ -49,6 +49,11 @@ one month later (same day next month), the items and the Total (SGD). A
 typed unit price overrides the list. The quotation template is uploaded once
 in the app, like the PO template.
 
+**Signature & company stamp:** upload an image of them once (PNG or JPG; a
+white background is made transparent) in the quotation tab's upload box, and
+every quotation is signed next to "Prepared by:". Upload a new image any time
+to replace it.
+
 ## PO to supplier (Hunan Chiopt)
 
 In the **PO to supplier** tab, type each item's **DM product code** (e.g.
@@ -66,10 +71,24 @@ type the price in the table. A typed price always overrides the list.
 The PO gets PO# `PO[YYMMDD-NN]` for the PO date (today unless changed), the
 delivery date 10 days later, the items and the Total (USD).
 
-The PO and quotation templates and the two price lists hold buying prices and
-contacts, so they are **not** in this repository. Upload them once in the app
-(the "Price lists & PO template" box); they are stored on your computer in
-the `private` folder, which git ignores. Upload a list again when it changes.
+The PO and quotation templates, the two price lists and the signature & stamp
+hold buying prices, contacts and signatures, so they are **not** in this
+repository. Upload them once in the app; upload one again whenever it changes,
+and the new one is used from then on.
+
+## Where your files are kept
+
+Uploaded files, running numbers, remembered customers and the generated PDFs
+are kept outside the app folder, so downloading a new version of the app
+keeps them:
+
+- `Documents/DM Optical App/Saved files` – templates, price lists, signature
+- `Documents/DM Optical App/Records` – running numbers, remembered customers
+- `Documents/DM Optical App/Generated documents` – the PDFs, one folder per date
+
+(The home folder is used if there is no Documents folder; set `DMO_APP_HOME`
+to choose another place.) Files an earlier version kept inside the app folder
+(`private`, `data`, `output`) are copied over automatically the first time.
 
 ## Start the app
 
@@ -106,8 +125,8 @@ In the page that opens:
 3. Pick the date. The Invoice No. and DO No. update to match.
 4. Click **Generate Invoice & DO**, check the previews and download the PDFs.
 
-Copies are also saved in `output/<date>/`, e.g.
-`output/2026-09-29/IN260929-01_POR13413.pdf`.
+Copies are also saved in `Generated documents/<date>/` (see below), e.g.
+`Generated documents/2026-09-29/IN260929-01_POR13413.pdf`.
 
 `samples/sample_PO.pdf` and `samples/sample_PO.xlsx` are made-up POs you can
 use to try it out.
@@ -135,5 +154,6 @@ python -m pytest
 - `docgen/pricing.py` – supplier price lookup (product code → model → USD price)
 - `docgen/supplier_po.py` – fills the supplier PO template
 - `docgen/quotation.py` – fills the quotation template
-- `docgen/private_files.py` – the uploaded price lists / PO template in `private/`
+- `docgen/private_files.py` – the uploaded templates, price lists and signature
+- `docgen/paths.py` – where saved files, records and PDFs are kept
 - `app.py` – the Streamlit page
