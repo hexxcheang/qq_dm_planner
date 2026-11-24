@@ -12,6 +12,7 @@ from openpyxl import Workbook, load_workbook
 from .models import Customer, PurchaseOrder
 from .numbering import do_no, invoice_no
 from .pdf_render import TableRows, read_image_crops, render_sheet
+from .stamp import column_left, company_stamp, place_image, row_bottom
 from .xlsx_utils import find_label, layout_item_block
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -26,6 +27,12 @@ INV_ITEMS_FIRST, INV_ITEMS_LAST = 18, 20
 DO_DATE, DO_NO, DO_PO_NO = "G9", "G10", "G11"
 DO_SHIP_TO_ROWS = ("A", 10)
 DO_ITEMS_FIRST, DO_ITEMS_LAST = 16, 17
+
+# Company stamp on the invoice: just below "Amount Due", lined up under the
+# Total / Amount Due labels (as on DM Optical's stamped invoices).
+STAMP_LABEL_COL, STAMP_LABEL = "G", "Amount Due"
+STAMP_OFFSET_PT = (17.0, 10.0)  # from the label column's left edge / the label row's bottom
+STAMP_WIDTH_PT = 95.0
 
 
 @dataclass
@@ -47,8 +54,12 @@ def _write_customer(ws, anchor: tuple[str, int], customer: Customer) -> None:
 
 
 def build_invoice(po: PurchaseOrder, doc_date: date, seq: int,
-                  template: Path = INVOICE_TEMPLATE) -> Workbook:
-    """The invoice template filled in for ``po`` (in memory)."""
+                  template: Path = INVOICE_TEMPLATE, stamp_from: Path | None = None) -> Workbook:
+    """The invoice template filled in for ``po`` (in memory).
+
+    ``stamp_from`` is the saved signature & company stamp image; its company
+    stamp is placed below "Amount Due".
+    """
     wb = load_workbook(template)
     ws = wb.active
 
@@ -76,6 +87,11 @@ def build_invoice(po: PurchaseOrder, doc_date: date, seq: int,
     last_item = rows[-1] if rows else INV_ITEMS_FIRST
     ws[f"H{total_row}"] = f"=SUM(H{INV_ITEMS_FIRST}:H{last_item})"
     ws[f"H{due_row}"] = f"=H{total_row}"
+    stamp = company_stamp(stamp_from) if stamp_from else None
+    if stamp is not None:
+        label_row = find_label(ws, STAMP_LABEL_COL, STAMP_LABEL, start_row=INV_ITEMS_FIRST)
+        place_image(ws, stamp, column_left(ws, STAMP_LABEL_COL) + STAMP_OFFSET_PT[0],
+                    row_bottom(ws, label_row) + STAMP_OFFSET_PT[1], STAMP_WIDTH_PT)
     return wb
 
 
@@ -107,8 +123,9 @@ def _safe(text: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]+", "_", text).strip("_") or "PO"
 
 
-def generate_documents(po: PurchaseOrder, doc_date: date, seq: int, out_dir: Path) -> GeneratedDocs:
-    """Create the Invoice and DO as PDFs in ``out_dir``."""
+def generate_documents(po: PurchaseOrder, doc_date: date, seq: int, out_dir: Path,
+                       stamp_from: Path | None = None) -> GeneratedDocs:
+    """Create the Invoice and DO as PDFs in ``out_dir`` (invoice stamped if ``stamp_from``)."""
     inv_no, d_no = invoice_no(doc_date, seq), do_no(doc_date, seq)
     po_part = _safe(po.po_number)
     out_dir = Path(out_dir)
@@ -118,7 +135,8 @@ def generate_documents(po: PurchaseOrder, doc_date: date, seq: int, out_dir: Pat
     # Long item lists continue on further pages (headings repeated) instead of shrinking.
     n = max(len(po.items), 1)
     inv_pdf.write_bytes(render_sheet(
-        build_invoice(po, doc_date, seq).active, read_image_crops(INVOICE_TEMPLATE),
+        build_invoice(po, doc_date, seq, stamp_from=stamp_from).active,
+        read_image_crops(INVOICE_TEMPLATE),
         TableRows(INV_ITEMS_FIRST - 1, INV_ITEMS_FIRST, INV_ITEMS_FIRST + n - 1),
         continued_label=f"Tax Invoice {inv_no}"))
     do_pdf.write_bytes(render_sheet(

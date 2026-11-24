@@ -183,6 +183,9 @@ def invoice_page(use_claude: bool) -> None:
             customer = None
 
     st.subheader("3. Generate")
+    if not STORE.path(SIGNATURE):
+        st.caption("ℹ️ To stamp invoices automatically, upload the signature & company stamp "
+                   "image once in the Quotation tab's upload box.")
     if not po_number.strip():
         problems.append("Enter the Customer PO No.")
     if not items and not problems:
@@ -193,7 +196,8 @@ def invoice_page(use_claude: bool) -> None:
     if st.button("Generate Invoice & DO", type="primary", disabled=bool(problems)):
         final = PurchaseOrder(po_number=po_number.strip(), items=items, customer=customer)
         with st.spinner("Creating documents…"):
-            docs = generate_documents(final, doc_date, int(seq), OUTPUT_DIR / doc_date.isoformat())
+            docs = generate_documents(final, doc_date, int(seq),
+                                      OUTPUT_DIR / doc_date.isoformat(), STORE.path(SIGNATURE))
         REGISTER.record(doc_date, int(seq), final.po_number)
         st.session_state["generated"] = docs
 

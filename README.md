@@ -22,6 +22,11 @@ templates:
 app remembers numbers already used in `data/register.json` and suggests the
 next one. You can change it before generating.
 
+**Company stamp:** once the signature & company stamp image is uploaded (in
+the Quotation tab), every invoice gets the company stamp right below "Amount
+Due". The stamp is taken from that image by its blue ink, without the
+signature. Delivery Orders are not stamped.
+
 Everything else (company header, payment terms, salesman, terms & conditions,
 Bill To / Ship To) is kept from the template. Bill To / Ship To can be changed
 in the app for a different customer.
@@ -167,4 +172,5 @@ python -m pytest
 - `docgen/quotation.py` – fills the quotation template
 - `docgen/private_files.py` – the uploaded templates, price lists and signature
 - `docgen/paths.py` – where saved files, records and PDFs are kept
+- `docgen/stamp.py` – the company stamp (from the signature image) and image placement
 - `app.py` – the Streamlit page

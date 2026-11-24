@@ -10,12 +10,9 @@ from datetime import date, datetime
 from pathlib import Path
 
 from openpyxl import Workbook, load_workbook
-from openpyxl.drawing.image import Image
-from openpyxl.drawing.spreadsheet_drawing import AnchorMarker, OneCellAnchor
-from openpyxl.drawing.xdr import XDRPositiveSize2D
 
-from .pdf_render import (EMU_PER_PT, LINE_SPACING, PADDING, col_width_pt, read_image_crops,
-                         render_sheet, row_height_pt)
+from .pdf_render import LINE_SPACING, PADDING, read_image_crops, render_sheet, row_height_pt
+from .stamp import place_image
 from .xlsx_utils import find_label, layout_item_block, replace_text
 
 # Cell positions in the quotation template.
@@ -138,24 +135,7 @@ def add_signature(ws, image_path: Path) -> None:
     baseline = row_top + row_height_pt(ws, label_row) - 1 - size * LINE_SPACING + size * 0.98
     x = PADDING + SIGNATURE_OFFSET_PT[0]
     y = baseline + SIGNATURE_OFFSET_PT[1]
-
-    col, col_left = 1, 0.0
-    while col_left + col_width_pt(ws, col) <= x:
-        col_left += col_width_pt(ws, col)
-        col += 1
-    row, row_top = 1, 0.0
-    while row_top + row_height_pt(ws, row) <= y:
-        row_top += row_height_pt(ws, row)
-        row += 1
-
-    img = Image(str(image_path))
-    width = SIGNATURE_WIDTH_PT
-    height = width * img.height / img.width
-    img.anchor = OneCellAnchor(
-        _from=AnchorMarker(col=col - 1, colOff=int((x - col_left) * EMU_PER_PT),
-                           row=row - 1, rowOff=int((y - row_top) * EMU_PER_PT)),
-        ext=XDRPositiveSize2D(cx=int(width * EMU_PER_PT), cy=int(height * EMU_PER_PT)))
-    ws.add_image(img)
+    place_image(ws, Path(image_path), x, y, SIGNATURE_WIDTH_PT)
 
 
 def generate_quotation(q: Quotation, template: Path, out_dir: Path,

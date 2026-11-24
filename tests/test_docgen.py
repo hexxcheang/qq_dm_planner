@@ -215,3 +215,57 @@ def test_long_orders_continue_on_next_pages(tmp_path, n_items):
                 assert f"{label} (continued)" in text
                 assert "S/N" in text and "Description" in text  # headings repeated
         assert "(MV" in texts[-1]  # the totals page also carries at least one item
+
+
+def _signature_and_stamp(tmp_path):
+    """Stand-in for the saved image: black signature left, blue stamp ring right."""
+    from PIL import Image
+
+    img = Image.new("RGBA", (600, 300), (255, 255, 255, 0))
+    px = img.load()
+    for x in range(10, 200):
+        px[x, 150 + (x % 20)] = (0, 0, 0, 255)
+    for x in range(300, 600):
+        for y in range(300):
+            if 120 ** 2 <= (x - 450) ** 2 + (y - 150) ** 2 <= 135 ** 2:
+                px[x, y] = (50, 50, 150, 255)
+    path = tmp_path / "signature_stamp.png"
+    img.save(path)
+    return path
+
+
+def test_company_stamp_is_the_blue_ink_only(tmp_path):
+    from PIL import Image
+
+    from docgen.stamp import company_stamp
+
+    stamp = company_stamp(_signature_and_stamp(tmp_path))
+    assert stamp.size == (271, 271)  # just the ring, no signature
+    black_only = tmp_path / "black.png"
+    Image.new("RGBA", (50, 50), (0, 0, 0, 255)).save(black_only)
+    assert company_stamp(black_only) is None
+
+
+@pytest.mark.parametrize("n_items", [1, 50])
+def test_invoice_stamped_below_amount_due(tmp_path, n_items):
+    po = PurchaseOrder("POR13495", [LineItem(f"Part {i}", 1, "Pcs", 10) for i in range(n_items)])
+    docs = generate_documents(po, DAY, 1, tmp_path, stamp_from=_signature_and_stamp(tmp_path))
+    with pdfplumber.open(docs.invoice_pdf) as pdf:
+        last = pdf.pages[-1]
+        due = next(w for w in last.extract_words() if w["text"] == "Due")
+        amount = next(w for w in last.extract_words()
+                      if w["text"] == "Amount" and abs(w["top"] - due["top"]) < 2)
+        stamps = [im for im in last.images if im["top"] > due["bottom"]]
+        assert len(stamps) == 1
+        assert 0 < stamps[0]["top"] - due["bottom"] < 20  # right below "Amount Due"
+        assert stamps[0]["x0"] >= amount["x0"]
+        assert round(stamps[0]["x1"] - stamps[0]["x0"]) == 95  # 95 pt wide
+        assert all(im["top"] < 120 for page in pdf.pages[:-1] for im in page.images)  # logo only
+    with pdfplumber.open(docs.do_pdf) as pdf:
+        assert sum(len(page.images) for page in pdf.pages) == 1  # the DO is not stamped
+
+
+def test_invoice_without_stamp_image(tmp_path):
+    docs = generate_documents(_po(1), DAY, 1, tmp_path)
+    with pdfplumber.open(docs.invoice_pdf) as pdf:
+        assert len(pdf.pages[0].images) == 1  # logo only
