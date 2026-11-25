@@ -312,3 +312,28 @@ def test_invoice_and_do_for_several_pos(tmp_path, n_pos):
     total = sum(item.amount for item in combined.items)
     with pdfplumber.open(docs.invoice_pdf) as pdf:
         assert f"${total:,.2f}" in pdf.pages[-1].extract_text()
+
+
+def _overlapping_words(page):
+    words = page.extract_words()
+    return [(v["text"], w["text"]) for i, v in enumerate(words) for w in words[i + 1:]
+            if v["x0"] < w["x1"] - 1 and w["x0"] < v["x1"] - 1
+            and v["top"] < w["bottom"] - 1 and w["top"] < v["bottom"] - 1]
+
+
+LONG_DESCRIPTIONS = [  # from quotation Q261125-01, where lines ran into the next item
+    "Prism Block (3 BPF IR 15X15X15mm) with 3 wavelengths - Lambda 1: 1630nm, lambda 2: 1345, "
+    "lambda 3: 1195nm",
+    "Prism Block (2 BPF IR 15X15X15mm) with 2 wavelengths - Lambda 1: 1630nm, lambda 2: 1195nm",
+    "Prism Block (2 BPF IR 15X15X15mm) with 2 wavelengths\n- Lambda 1: 1630nm, lambda 2: 1195nm",
+    "Slit, glass type, 50umx18mm",
+]
+
+
+def test_long_descriptions_get_tall_enough_rows(tmp_path):
+    po = PurchaseOrder("POR1", [LineItem(d, 1, "Pcs", 100) for d in LONG_DESCRIPTIONS])
+    docs = generate_documents(po, DAY, 1, tmp_path)
+    for path in (docs.invoice_pdf, docs.do_pdf):
+        with pdfplumber.open(path) as pdf:
+            for page in pdf.pages:
+                assert _overlapping_words(page) == [], path.name

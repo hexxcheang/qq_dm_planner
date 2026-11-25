@@ -7,12 +7,13 @@ those too. Formulas are not rewritten; callers rewrite the ones they own.
 
 from __future__ import annotations
 
-import math
 from copy import copy
 
 from openpyxl.styles import Alignment, Border, Side
 from openpyxl.utils import column_index_from_string, get_column_letter
 from openpyxl.worksheet.worksheet import Worksheet
+
+from .pdf_render import col_width_pt, wrapped_lines
 
 LINE_HEIGHT = 15.0
 MIN_FILLER_HEIGHT = 9.0
@@ -46,13 +47,6 @@ def find_label(ws: Worksheet, column: str, label: str, start_row: int = 1) -> in
         if isinstance(value, str) and value.strip().lower() == label.lower():
             return row
     raise ValueError(f"Label {label!r} not found in column {column}")
-
-
-def _text_lines(text: str, width_chars: float) -> int:
-    lines = 0
-    for part in str(text).splitlines() or [""]:
-        lines += max(1, math.ceil(len(part) / max(width_chars, 1)))
-    return lines
 
 
 def layout_item_block(
@@ -108,16 +102,24 @@ def layout_item_block(
         for c1, c2 in merges:
             ws.merge_cells(f"{c1}{row}:{c2}{row}")
 
+    # Row heights come from the same wrapping the PDF drawing uses, so a description
+    # never needs more lines than its row has room for.
     wrap_start = column_index_from_string(wrap_column)
     wrap_end = next((column_index_from_string(c2) for c1, c2 in merges if c1 == wrap_column),
                     wrap_start)
-    wrap_width = sum(ws.column_dimensions[get_column_letter(i)].width or 8.43
-                     for i in range(wrap_start, wrap_end + 1)) * 1.1
+    wrap_width = sum(col_width_pt(ws, i) for i in range(wrap_start, wrap_end + 1))
+    wrap_font = first_styles[wrap_column][1]
+    end_letter = get_column_letter(wrap_end)
+    next_letter = get_column_letter(wrap_end + 1)
+    bordered = bool((first_styles.get(end_letter) and first_styles[end_letter][0].right.style)
+                    or (first_styles.get(next_letter) and first_styles[next_letter][0].left.style))
 
     item_rows = list(range(first_row, first_row + n_items))
     used = 0.0
     for row, text in zip(item_rows, descriptions):
-        ws.row_dimensions[row].height = LINE_HEIGHT * _text_lines(text, wrap_width)
+        lines = wrapped_lines(str(text or ""), float(wrap_font.sz or 11), wrap_width,
+                              bool(wrap_font.b), bordered)
+        ws.row_dimensions[row].height = LINE_HEIGHT * lines
         used += ws.row_dimensions[row].height
     for row in range(first_row + n_items, last):
         ws.row_dimensions[row].height = MIN_FILLER_HEIGHT

@@ -226,11 +226,13 @@ def _font_rgb(font) -> tuple[float, float, float]:
     return (0.0, 0.0, 0.0)
 
 
-def wrapped_lines(text: str, size: float, cell_width: float, bold: bool = False) -> int:
-    """How many lines ``text`` takes in a wrapping, unbordered cell this wide (as drawn here)."""
+def wrapped_lines(text: str, size: float, cell_width: float, bold: bool = False,
+                  bordered: bool = False) -> int:
+    """How many lines ``text`` takes in a wrapping cell this wide, exactly as _draw_text wraps it."""
     _register_fonts()
-    room = cell_width - 2 * PADDING + WRAP_SLACK
-    return len(_wrap(text, BOLD if bold else REGULAR, size, max(1.0, room)))
+    font = cjk_font() if CJK_TEXT.search(text) else (BOLD if bold else REGULAR)
+    room = cell_width - 2 * PADDING + (0 if bordered else WRAP_SLACK)
+    return len(_wrap(text, font, size, max(1.0, room)))
 
 
 def _wrap(text: str, font: str, size: float, width: float) -> list[str]:

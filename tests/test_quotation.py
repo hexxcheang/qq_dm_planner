@@ -302,3 +302,17 @@ def test_list_price_fills_in_and_stays_editable(masterlist):
     # Clearing a price brings the list price back.
     out3.loc[0, "Unit Price (SGD)"] = nan
     assert fill_list_prices(out3, catalog, filled)[0].loc[0, "Unit Price (SGD)"] == 97.14
+
+
+def test_quotation_long_descriptions_do_not_overlap(tmp_path, quotation_template):
+    from tests.test_docgen import LONG_DESCRIPTIONS, _overlapping_words
+
+    customer = QuoteCustomer("Singapore Institute of Manufacturing Technology",
+                             "2 Fusionopolis Way #08-04", "Innovis, Singapore 138634",
+                             "Edward Neo", "Edward_Neo@a-star.edu.sg")
+    lines = [QuoteLine(d, q, p) for d, q, p in zip(LONG_DESCRIPTIONS * 2, [1, 10, 1, 10, 1],
+                                                     [14500, 1500, 12500, 1300, 1070])]
+    pdf_path = generate_quotation(Quotation(date(2026, 11, 25), 1, customer, lines),
+                                  quotation_template, tmp_path)
+    with pdfplumber.open(pdf_path) as pdf:
+        assert _overlapping_words(pdf.pages[0]) == []
